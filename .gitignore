@@ -7,3 +7,9 @@ node_modules
 next-env.d.ts
 .claude
 .node_modules
+
+# Prisma 7 generated client (regenerate with `npx prisma generate`)
+generated/
+
+# Design docs and notes stay local
+docs/

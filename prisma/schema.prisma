@@ -1,0 +1,177 @@
+// Momentum v2 data model. Prisma ORM 7 (pinned). See docs/DESIGN.md for the "why" behind every line.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- Enums ----------
+// An enum is a type with a fixed list of values. Postgres rejects any other value.
+
+enum AnalysisStatus {
+  PENDING // created at ingress; a job is queued
+  RUNNING // a worker picked it up
+  DONE
+  FAILED
+}
+
+enum DraftStatus {
+  SUGGESTED // AI wrote it; editable
+  APPROVED // a human approved these exact words; locked
+  REJECTED // soft-deleted; can be restored to SUGGESTED
+  POSTING // we claimed it and are calling Slack (intent recorded BEFORE the side effect)
+  POSTED // Slack confirmed; final
+  FAILED // Slack clearly failed, or the reconciler found no message; safe to retry
+}
+
+enum DraftType {
+  REPLY
+  SUMMARY
+  MEETING
+  INVITE
+}
+
+enum AssignmentSource {
+  THREAD_ID // Claude picked a valid user ID from the thread's participants
+  NAME_MATCH // exact, unique display-name match in the workspace
+  MANUAL // a human picked or changed it
+  NONE // unassigned ("Team", unclear, or ambiguous)
+}
+
+// ---------- Tenancy ----------
+
+model Workspace {
+  id          String   @id @default(cuid())
+  slackTeamId String   @unique // Slack's own team ID, e.g. "T0SEED"
+  name        String
+  createdAt   DateTime @default(now())
+
+  users       SlackUser[]
+  threads     Thread[]
+  auditEvents AuditEvent[]
+}
+
+// Cached copy of Slack users, so we don't call users.info for every message.
+model SlackUser {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  slackUserId String // e.g. "U02ABC"
+  displayName String
+  realName    String?
+  refreshedAt DateTime  @default(now())
+
+  // One person can appear in three roles. Each role is its own relation.
+  requestedAnalyses Analysis[]
+  assignedItems     ActionItem[]
+  approvedDrafts    Draft[]
+
+  @@unique([workspaceId, slackUserId]) // the same Slack user can't be cached twice per workspace
+  @@index([workspaceId, displayName]) // the name matcher's lookup (decision #5)
+}
+
+// ---------- Core flow ----------
+
+model Thread {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id])
+  channelId      String
+  threadTs       String // Slack timestamps are strings like "1729650000.123456" -- never floats (decision #2)
+  lastAnalyzedTs String? // cursor: newest message already analyzed. Null until the first analysis finishes, so the worker knows to read the whole thread
+  createdAt      DateTime  @default(now())
+
+  analyses Analysis[]
+
+  @@unique([workspaceId, channelId, threadTs]) // one row per real Slack thread; ingress upserts on this
+}
+
+model Analysis {
+  id            String         @id @default(cuid())
+  threadId      String
+  thread        Thread         @relation(fields: [threadId], references: [id])
+  requestedById String
+  requestedBy   SlackUser      @relation(fields: [requestedById], references: [id])
+  throughTs     String // newest message included; makes re-runs idempotent
+  status        AnalysisStatus @default(PENDING)
+  attempts      Int            @default(0)
+  error         String?
+
+  // Filled in when status = DONE, so every one of these is nullable.
+  summary       String?
+  decision      String?
+  nextStep      String?
+  openQuestions String[] // Postgres TEXT[]
+  needResponse  Boolean?
+  rawOutput     Json? // Claude's exact JSON, kept for debugging and evals
+
+  // Metrics
+  model        String?
+  latencyMs    Int?
+  inputTokens  Int?
+  outputTokens Int?
+  costUsd      Decimal? @db.Decimal(10, 6) // estimated at call time; summed for the daily budget
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  actionItems ActionItem[]
+  drafts      Draft[]
+
+  @@unique([threadId, throughTs]) // the same thread at the same point can't be analyzed twice
+  @@index([status]) // the worker's "find PENDING jobs"
+  @@index([requestedById, createdAt]) // per-user rate limit: "analyses in the last hour"
+  @@index([createdAt]) // daily budget: "cost so far today"
+}
+
+model ActionItem {
+  id                String           @id @default(cuid())
+  analysisId        String
+  analysis          Analysis         @relation(fields: [analysisId], references: [id])
+  task              String
+  assigneeName      String           // what Claude said, verbatim
+  assigneeId        String?
+  assignee          SlackUser?       @relation(fields: [assigneeId], references: [id])
+  assignmentSource  AssignmentSource @default(NONE)
+  assigneeConfirmed Boolean          @default(false)
+  done              Boolean          @default(false)
+}
+
+model Draft {
+  id             String      @id @default(cuid())
+  analysisId     String
+  analysis       Analysis    @relation(fields: [analysisId], references: [id])
+  type           DraftType
+  text           String
+  status         DraftStatus @default(SUGGESTED)
+  approvedById   String?
+  approvedBy     SlackUser?  @relation(fields: [approvedById], references: [id])
+  approvedAt     DateTime?
+  slackMessageTs String? // which Slack message we created
+  lastError      String? // why the last post attempt failed
+  postedAt       DateTime?
+  updatedAt      DateTime    @updatedAt
+
+  @@unique([analysisId, type]) // at most one REPLY, one SUMMARY, ... per analysis
+  @@index([status, updatedAt]) // reconciler: "POSTING for more than 2 minutes"
+}
+
+// Append-only history. Written in the same transaction as every status change.
+model AuditEvent {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  actorId     String? // SlackUser.id, or null for system actions (worker, reconciler)
+  entityType  String // "Draft" | "Analysis" | "ActionItem"
+  entityId    String
+  action      String // "approve" | "reject" | "restore" | "edit" | "claim" | "posted" | ...
+  fromStatus  String? // null when the entity was just created
+  toStatus    String?
+  createdAt   DateTime  @default(now())
+
+  @@index([entityType, entityId]) // "history of this draft"
+}
