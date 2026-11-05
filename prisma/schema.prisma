@@ -19,6 +19,13 @@ enum AnalysisStatus {
   FAILED
 }
 
+enum JobStatus {
+  QUEUED // runnable once runAt has passed
+  RUNNING // a worker holds it; lockedAt + lease window says until when
+  DONE
+  FAILED // gave up: NonRetryable error, or attempts hit the cap (decision #8, poison cap)
+}
+
 enum DraftStatus {
   SUGGESTED // AI wrote it; editable
   APPROVED // a human approved these exact words; locked
@@ -37,7 +44,8 @@ enum DraftType {
 
 enum AssignmentSource {
   THREAD_ID // Claude picked a valid user ID from the thread's participants
-  NAME_MATCH // exact, unique display-name match in the workspace
+  THREAD_NAME // exact display-name match, unique among the thread's participants (decision #5)
+  NAME_MATCH // exact display-name match, unique in the whole workspace
   MANUAL // a human picked or changed it
   NONE // unassigned ("Team", unclear, or ambiguous)
 }
@@ -133,7 +141,7 @@ model ActionItem {
   analysisId        String
   analysis          Analysis         @relation(fields: [analysisId], references: [id])
   task              String
-  assigneeName      String           // what Claude said, verbatim
+  assigneeName      String // what Claude said, verbatim
   assigneeId        String?
   assignee          SlackUser?       @relation(fields: [assigneeId], references: [id])
   assignmentSource  AssignmentSource @default(NONE)
@@ -174,4 +182,25 @@ model AuditEvent {
   createdAt   DateTime  @default(now())
 
   @@index([entityType, entityId]) // "history of this draft"
+}
+
+// ---------- Queue ----------
+// Decision #8: a hand-rolled queue. One row per unit of background work. Job state is about execution
+// (who holds it, how many tries); Analysis.status is about the analysis. They are different rows on purpose.
+model Job {
+  id          String    @id @default(cuid())
+  type        String // handler name, e.g. "analyze". The runner dispatches on this.
+  payload     Json // handler input, e.g. { analysisId }. Small by design: the real data lives in its own table.
+  status      JobStatus @default(QUEUED)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3)
+  runAt       DateTime  @default(dbgenerated("now()")) // DB clock, not the client's: the claim compares it to the DB's now() (one clock rule)
+  lockedAt    DateTime? // when the current holder claimed it; null unless RUNNING
+  lockedBy    String? // the worker's id, for debugging "who had it when it died"
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, runAt]) // the claim query: QUEUED ordered by runAt
+  @@index([status, lockedAt]) // the reclaim query: RUNNING with an old lockedAt
 }

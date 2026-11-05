@@ -6,7 +6,7 @@ export { prisma };
 /** Wipe every table. TRUNCATE ... CASCADE follows foreign keys, so order doesn't matter. */
 export async function resetDb() {
   await prisma.$executeRawUnsafe(
-    `TRUNCATE "AuditEvent", "Draft", "ActionItem", "Analysis", "Thread", "SlackUser", "Workspace" CASCADE`,
+    `TRUNCATE "Job", "AuditEvent", "Draft", "ActionItem", "Analysis", "Thread", "SlackUser", "Workspace" CASCADE`,
   );
 }
 
