@@ -3,7 +3,7 @@
 import "dotenv/config";
 import os from "node:os";
 import { runJobs } from "../lib/jobs/queue";
-import { defaultHandlers } from "../lib/jobs/handlers";
+import { defaultHandlers, usingFakeReader } from "../lib/jobs/handlers";
 
 const POLL_MS = Number(process.env.WORKER_POLL_MS ?? 1_000);
 const BATCH = 10;
@@ -20,7 +20,7 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
-  console.log(`[worker ${workerId}] started, polling every ${POLL_MS}ms`);
+  console.log(`[worker ${workerId}] started, polling every ${POLL_MS}ms, slack reader: ${usingFakeReader ? "FAKE (sample thread)" : "real"}`);
   while (!stopping) {
     const n = await runJobs(BATCH, { workerId, handlers: defaultHandlers, log: (l) => console.log(`[worker] ${l}`) });
     if (n === 0) await sleep(POLL_MS);

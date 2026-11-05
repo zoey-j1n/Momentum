@@ -34,9 +34,9 @@ async function snapshot(jobId: string, analysisId: string) {
   const job = await prisma.job.findUniqueOrThrow({ where: { id: jobId }, select: { status: true, attempts: true, lockedBy: true } });
   const analysis = await prisma.analysis.findUniqueOrThrow({
     where: { id: analysisId },
-    select: { status: true, attempts: true, thread: { select: { lastAnalyzedTs: true } }, _count: { select: { drafts: true, actionItems: true } } },
+    select: { status: true, attempts: true, throughTs: true, thread: { select: { lastAnalyzedTs: true } }, _count: { select: { drafts: true, actionItems: true } } },
   });
-  return { job, analysis: { status: analysis.status, attempts: analysis.attempts, drafts: analysis._count.drafts, items: analysis._count.actionItems, cursor: analysis.thread.lastAnalyzedTs } };
+  return { job, analysis: { status: analysis.status, attempts: analysis.attempts, throughTs: analysis.throughTs, drafts: analysis._count.drafts, items: analysis._count.actionItems, cursor: analysis.thread.lastAnalyzedTs } };
 }
 
 function check(cond: boolean, what: string, failures: string[]) {
@@ -50,7 +50,7 @@ async function main() {
   console.log(`1. enqueued analysis ${analysisId}, job ${jobId}`);
 
   // Worker A claims the job, then sleeps inside the fake Slack read. We kill it there.
-  const a = startWorker("A", { CRASH_TEST_PAUSE_MS: String(PAUSE_MS) });
+  const a = startWorker("A", { SLACK_USE_FAKE_READER: "1", CRASH_TEST_PAUSE_MS: String(PAUSE_MS) });
   await a.waitFor("attempt 1/3 start");
   await new Promise((r) => setTimeout(r, 1_000)); // let step 1 (RUNNING) land
   a.child.kill("SIGKILL");
@@ -62,7 +62,7 @@ async function main() {
   check(mid.analysis.status === "RUNNING" && mid.analysis.drafts === 0, "analysis is RUNNING with no drafts (nothing partial was written)", failures);
 
   // Worker B must NOT take it while the lease is fresh.
-  const b = startWorker("B", {});
+  const b = startWorker("B", { SLACK_USE_FAKE_READER: "1" });
   await new Promise((r) => setTimeout(r, 2_500));
   const held = await snapshot(jobId, analysisId);
   check(held.job.attempts === 1, "fresh lease: worker B left the job alone", failures);
@@ -80,7 +80,7 @@ async function main() {
   check(end.job.status === "DONE" && end.job.attempts === 2, "job DONE after exactly 2 attempts", failures);
   check(end.analysis.status === "DONE" && end.analysis.attempts === 2, "analysis DONE, attempts 2", failures);
   check(end.analysis.drafts === 4, "exactly 4 drafts (no duplicates)", failures);
-  check(end.analysis.cursor !== null, "thread cursor advanced", failures);
+  check(end.analysis.cursor !== null && end.analysis.cursor === end.analysis.throughTs, "thread cursor advanced and equals analysis.throughTs", failures);
   check((await prisma.analysis.count({ where: { threadId: (await prisma.analysis.findUniqueOrThrow({ where: { id: analysisId } })).threadId } })) === 1, "exactly one analysis for the thread", failures);
 
   console.log(failures.length === 0 ? "\nCRASH TEST PASSED" : `\nCRASH TEST FAILED: ${failures.join("; ")}`);

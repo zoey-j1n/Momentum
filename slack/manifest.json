@@ -1,0 +1,41 @@
+{
+  "_metadata": { "major_version": 2, "minor_version": 1 },
+  "display_information": {
+    "name": "Momentum",
+    "description": "Catch up on a Slack thread: summary, action items, and drafted follow-ups you approve before they post.",
+    "background_color": "#1f2937"
+  },
+  "features": {
+    "bot_user": { "display_name": "Momentum", "always_online": false },
+    "shortcuts": [
+      {
+        "name": "Catch up with Momentum",
+        "type": "message",
+        "callback_id": "catch_up",
+        "description": "Summarize this thread and draft the follow-ups"
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "commands",
+        "channels:history",
+        "groups:history",
+        "im:history",
+        "mpim:history",
+        "users:read",
+        "chat:write"
+      ]
+    }
+  },
+  "settings": {
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://REPLACE-WITH-YOUR-TUNNEL-HOST/api/slack/interactions"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

@@ -1,7 +1,10 @@
 // The one thing the handler needs from Slack: "give me this thread's messages, newest first optional".
-// It's an interface so Milestone 4 can run against a fake (no workspace token until Milestone 5)
+// It's an interface so the worker can run against a fake (sample thread, crash test)
 // and so tests can hand the handler a thread that throws, hangs, or changes between calls.
 import type { SlackMessage } from "../analysis/transcript";
+import type { WebClient } from "@slack/web-api";
+import { NON_RETRYABLE_SLACK_ERRORS, slackClient, slackErrorCode } from "./client";
+import { NonRetryableError } from "../jobs/errors";
 
 export type ThreadRef = { channelId: string; threadTs: string };
 
@@ -52,4 +55,64 @@ export class FakeSlackReader implements SlackReader {
   }
 }
 
-// The real reader (conversations.replies with pagination and a per-workspace token) arrives in Milestone 5.
+// ---------- The real reader (Milestone 5) ----------
+
+/**
+ * Reads a thread through Slack's Web API. Pages through conversations.replies (200 per page, oldest
+ * first) and looks up a display name for every distinct author with users.info.
+ *
+ * afterTs is the thread's cursor. We pass it to Slack as `oldest` so the API does the filtering,
+ * and we filter again client-side, because Slack returns the parent message in some cases
+ * regardless of `oldest`. The string compare is safe for the same reason as in the fake.
+ */
+// The SDK's message type omits subtype/hidden; these are the fields we read.
+type RawMessage = { ts?: string; user?: string; text?: string; subtype?: string; hidden?: boolean };
+
+export class SlackWebReader implements SlackReader {
+  constructor(private client: () => WebClient = slackClient) {}
+
+  async readThread(ref: ThreadRef, afterTs: string | null) {
+    const slack = this.client();
+    const raw: SlackMessage[] = [];
+    let cursor: string | undefined;
+    try {
+      do {
+        const page = await slack.conversations.replies({
+          channel: ref.channelId,
+          ts: ref.threadTs,
+          limit: 200,
+          cursor,
+          ...(afterTs ? { oldest: afterTs, inclusive: false } : {}),
+        });
+        for (const m of (page.messages ?? []) as RawMessage[]) {
+          if (!m.ts || !m.user || typeof m.text !== "string") continue; // bot posts without a user, attachments-only, etc.
+          if (m.subtype && m.subtype !== "thread_broadcast") continue; // joins, edits, deletes are not conversation
+          if (m.hidden) continue;
+          raw.push({ user: m.user, text: m.text, ts: m.ts });
+        }
+        cursor = page.response_metadata?.next_cursor || undefined;
+      } while (cursor);
+    } catch (err) {
+      const code = slackErrorCode(err);
+      if (code && NON_RETRYABLE_SLACK_ERRORS.has(code)) throw new NonRetryableError(`slack conversations.replies: ${code}`);
+      throw err;
+    }
+
+    const messages = afterTs === null ? raw : raw.filter((m) => m.ts > afterTs);
+
+    const users = new Map<string, { displayName: string; realName?: string }>();
+    for (const id of new Set(messages.map((m) => m.user))) {
+      try {
+        const { user } = await slack.users.info({ user: id });
+        const p = user?.profile;
+        users.set(id, {
+          displayName: p?.display_name_normalized || p?.display_name || user?.real_name || id,
+          realName: user?.real_name ?? undefined,
+        });
+      } catch {
+        users.set(id, { displayName: id }); // deactivated or unknown user: keep the ID, never block the analysis
+      }
+    }
+    return { messages, users };
+  }
+}

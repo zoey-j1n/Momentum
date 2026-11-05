@@ -20,20 +20,21 @@ export async function enqueueSample(): Promise<{ analysisId: string; jobId: stri
     create: { workspaceId: ws.id, channelId: "C0SAMPLE", threadTs: SAMPLE_THREAD[0].ts },
   });
 
-  const throughTs = SAMPLE_THREAD[SAMPLE_THREAD.length - 1].ts;
-
-  // Reset: wipe any previous run's results so the unique (threadId, throughTs) does not block us.
-  const previous = await prisma.analysis.findUnique({ where: { threadId_throughTs: { threadId: thread.id, throughTs } } });
-  if (previous) {
+  // Reset: wipe any previous run's results. The partial unique index (one PENDING/RUNNING analysis per
+  // thread) and the unique (threadId, throughTs) would both block a re-run otherwise.
+  const previous = await prisma.analysis.findMany({ where: { threadId: thread.id }, select: { id: true } });
+  if (previous.length > 0) {
+    const ids = previous.map((a) => a.id);
     await prisma.$transaction([
-      prisma.draft.deleteMany({ where: { analysisId: previous.id } }),
-      prisma.actionItem.deleteMany({ where: { analysisId: previous.id } }),
-      prisma.analysis.delete({ where: { id: previous.id } }),
+      prisma.draft.deleteMany({ where: { analysisId: { in: ids } } }),
+      prisma.actionItem.deleteMany({ where: { analysisId: { in: ids } } }),
+      prisma.analysis.deleteMany({ where: { id: { in: ids } } }),
     ]);
   }
 
+  // throughTs stays null here; the worker fills it in when it commits (decision #14).
   const analysis = await prisma.analysis.create({
-    data: { threadId: thread.id, requestedById: requester.id, throughTs, status: "PENDING" },
+    data: { threadId: thread.id, requestedById: requester.id, status: "PENDING" },
   });
   const jobId = await enqueue("analyze", { analysisId: analysis.id });
   return { analysisId: analysis.id, jobId, threadId: thread.id };

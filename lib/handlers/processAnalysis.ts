@@ -144,9 +144,10 @@ export async function commitAnalysis(input: CommitInput): Promise<void> {
   //    of the same type even if the guard somehow got bypassed.
   // 3. All or nothing matters for the cursor. If lastAnalyzedTs moved forward but the drafts
   //    didn't save, those messages would be skipped forever. If the drafts saved but the cursor
-  //    didn't move, the next request would create an Analysis with the same throughTs and the
-  //    unique (threadId, throughTs) would reject it, so the thread could never be analyzed again.
-  //    The cursor has to move in the same commit as the results it stands for.
+  //    didn't move, the next run would re-read and re-analyze the same messages, and its commit
+  //    would then collide on unique (threadId, throughTs). The cursor has to move in the same
+  //    commit as the results it stands for, and analysis.throughTs is written here too, so the
+  //    row records exactly what the cursor now points at (decision #14).
   await prisma.$transaction(async (tx) => {
     const out = input.result.output;
 
@@ -155,6 +156,7 @@ export async function commitAnalysis(input: CommitInput): Promise<void> {
       where: { id: input.analysisId, status: "RUNNING" },
       data: {
         status: "DONE",
+        throughTs: input.throughTs,
         summary: out.summary,
         decision: out.decision,
         nextStep: out.nextStep,

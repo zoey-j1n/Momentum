@@ -104,7 +104,7 @@ model Analysis {
   thread        Thread         @relation(fields: [threadId], references: [id])
   requestedById String
   requestedBy   SlackUser      @relation(fields: [requestedById], references: [id])
-  throughTs     String // newest message included; makes re-runs idempotent
+  throughTs     String? // newest message covered. Null while PENDING/RUNNING; the worker sets it in the commit transaction (decision #14)
   status        AnalysisStatus @default(PENDING)
   attempts      Int            @default(0)
   error         String?
@@ -130,7 +130,9 @@ model Analysis {
   actionItems ActionItem[]
   drafts      Draft[]
 
-  @@unique([threadId, throughTs]) // the same thread at the same point can't be analyzed twice
+  @@unique([threadId, throughTs]) // the same thread at the same point can't be analyzed twice (nulls never collide in Postgres)
+  // Plus a partial unique index, written by hand in the migration because Prisma can't express it:
+  //   one PENDING or RUNNING analysis per thread (decision #14). The ingress treats its violation as "already queued".
   @@index([status]) // the worker's "find PENDING jobs"
   @@index([requestedById, createdAt]) // per-user rate limit: "analyses in the last hour"
   @@index([createdAt]) // daily budget: "cost so far today"

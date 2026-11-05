@@ -33,9 +33,11 @@ export type ClaimedJob = {
 export async function enqueue(
   type: string,
   payload: Prisma.InputJsonValue,
-  opts: { runAt?: Date; maxAttempts?: number } = {},
+  opts: { runAt?: Date; maxAttempts?: number; db?: Prisma.TransactionClient } = {},
 ): Promise<string> {
-  const job = await prisma.job.create({
+  // `db` lets a caller enqueue inside its own transaction, so "the row that needs the job" and
+  // "the job" commit together or not at all (the Slack ingress does this with the Analysis row).
+  const job = await (opts.db ?? prisma).job.create({
     data: { type, payload, runAt: opts.runAt, maxAttempts: opts.maxAttempts },
     select: { id: true },
   });
