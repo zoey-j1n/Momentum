@@ -27,7 +27,7 @@ const messages: SlackMessage[] = [
 
 async function main() {
   const t = buildTranscript(messages, names);
-  const user = buildUserMessage(t);
+  const user = buildUserMessage(t, undefined, { displayName: "Zoey", slackUserId: "U0ZOEY" }); // Zoey asked, so drafts are in her voice
 
   console.log("=== model:", MODEL);
   console.log("=== user message sent:\n" + user + "\n");

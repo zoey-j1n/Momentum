@@ -5,6 +5,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { z } from "zod";
 import { prisma } from "../db";
 import { enqueue } from "../jobs/queue";
+import { requesterCursor } from "../analysis/cursor";
 
 // The fields of Slack's `message_action` payload that we use. Everything else Slack sends is ignored.
 // This is OUR checklist of what we need; Slack's format is fixed and documented, not derived from this.
@@ -63,13 +64,15 @@ export async function catchUp(p: MessageActionPayload): Promise<CatchUpResult> {
   }));
 
   // Early refusal with no Slack call (string compare is valid: Slack ts values have a fixed width).
+  // The cursor is THIS person's (decision #19): what they last caught up on, not what anyone did.
   // A click on a REPLY at or before the cursor: that message was already covered. A click on the PARENT
   // means "catch up on whatever is new", and the parent's ts is always old, so it is never refused on
   // its own; only if Slack included latest_reply and that is also covered. Otherwise the worker finds out.
-  if (thread.lastAnalyzedTs !== null) {
+  const cursor = await requesterCursor(thread.id, requester.id);
+  if (cursor !== null) {
     const isReply = p.message.thread_ts !== undefined && p.message.thread_ts !== p.message.ts;
     const newestKnown = isReply ? p.message.ts : p.message.latest_reply;
-    if (newestKnown !== undefined && newestKnown <= thread.lastAnalyzedTs) {
+    if (newestKnown !== undefined && newestKnown <= cursor) {
       return { kind: "caught_up", threadId: thread.id };
     }
   }
@@ -89,7 +92,7 @@ export async function catchUp(p: MessageActionPayload): Promise<CatchUpResult> {
     return { kind: "queued", threadId: thread.id, ...result };
   } catch (err) {
     // P2002 = unique violation. The only unique that can fire on this insert is the partial index
-    // "one PENDING/RUNNING analysis per thread", i.e. a double click or a repeated delivery.
+    // "one PENDING/RUNNING analysis per thread and requester", i.e. a double click or a repeated delivery.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
       return { kind: "already_queued", threadId: thread.id };
     }
@@ -105,6 +108,6 @@ export function ackText(result: CatchUpResult, dashboardUrl: string): string {
     case "already_queued":
       return `Already on it. This thread is being analyzed right now: ${dashboardUrl}`;
     case "caught_up":
-      return `Nothing new since the last catch-up. Run it on a newer message to analyze what came after.`;
+      return `Nothing new since your last catch-up. Run it on a newer message to analyze what came after.`;
   }
 }

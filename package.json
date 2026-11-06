@@ -4,7 +4,7 @@
   "description": "Slack command center with AI-powered actions",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && prisma migrate deploy && next build",
     "start": "next start",
     "bolt": "node --env-file=.env -r tsx/cjs bolt/app.ts",
     "worker": "tsx worker/index.ts",

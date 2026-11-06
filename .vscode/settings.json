@@ -1,0 +1,5 @@
+{
+  // Use the project's TypeScript (5.9) for diagnostics, not VS Code's bundled one, so the editor agrees with `npx tsc`.
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true
+}

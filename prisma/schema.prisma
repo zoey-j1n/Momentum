@@ -95,7 +95,7 @@ model Thread {
   channelId      String
   threadTs       String // Slack timestamps are strings like "1729650000.123456" -- never floats (decision #2)
   channelName    String? // display only ("#launch"); from the shortcut payload, refreshed on every click. Milestone 6
-  lastAnalyzedTs String? // cursor: newest message already analyzed. Null until the first analysis finishes, so the worker knows to read the whole thread
+  lastAnalyzedTs String? // newest message covered by ANY finished analysis; display and crash-test only. The cursor that drives reads is per requester (decision #19, lib/analysis/cursor.ts)
   createdAt      DateTime  @default(now())
 
   analyses Analysis[]
@@ -135,9 +135,9 @@ model Analysis {
   actionItems ActionItem[]
   drafts      Draft[]
 
-  @@unique([threadId, throughTs]) // the same thread at the same point can't be analyzed twice (nulls never collide in Postgres)
+  @@unique([threadId, requestedById, throughTs]) // one person can't analyze the same thread at the same point twice (nulls never collide in Postgres); decision #19
   // Plus a partial unique index, written by hand in the migration because Prisma can't express it:
-  //   one PENDING or RUNNING analysis per thread (decision #14). The ingress treats its violation as "already queued".
+  //   one PENDING or RUNNING analysis per (thread, requester) (decisions #14, #19). The ingress treats its violation as "already queued".
   @@index([status]) // the worker's "find PENDING jobs"
   @@index([requestedById, createdAt]) // per-user rate limit: "analyses in the last hour"
   @@index([createdAt]) // daily budget: "cost so far today"
@@ -162,6 +162,7 @@ model Draft {
   analysis       Analysis    @relation(fields: [analysisId], references: [id])
   type           DraftType
   text           String
+  reason         String? // why Momentum suggested it ("Khoa asked you for the deploy date"); null on drafts added by hand later (decision #19)
   status         DraftStatus @default(SUGGESTED)
   approvedById   String?
   approvedBy     SlackUser?  @relation(fields: [approvedById], references: [id])

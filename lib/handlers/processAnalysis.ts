@@ -11,6 +11,7 @@
 import { prisma } from "../db";
 import { buildTranscript } from "../analysis/transcript";
 import { SYSTEM_PROMPT, buildUserMessage } from "../analysis/prompt";
+import { requesterCursor } from "../analysis/cursor";
 import { AnalysisOutput } from "../analysis/schema";
 import { callClaude, ModelCall, ModelOutputError } from "../analysis/client";
 import { matchAssignee } from "../analysis/matchAssignees";
@@ -50,10 +51,11 @@ export async function processAnalysis(analysisId: string, slack: SlackReader): P
   // an error on, and the catch needs `analysis.attempts`.
   try {
     // ---- Step 2: fetch the thread ---------------------------------------------------------------------
-    // Only messages after the cursor. Null cursor means the whole thread.
+    // Only messages after THIS requester's cursor (decision #19). Null means they never caught up: whole thread.
+    const cursor = await requesterCursor(analysis.threadId, analysis.requestedById);
     const { messages, users } = await slack.readThread(
       { channelId: analysis.thread.channelId, threadTs: analysis.thread.threadTs },
-      analysis.thread.lastAnalyzedTs,
+      cursor,
     );
 
     // Edge case: nothing new since the cursor. Retrying cannot change that, so fail for good with a
@@ -90,7 +92,7 @@ export async function processAnalysis(analysisId: string, slack: SlackReader): P
     // ---- Step 4: Claude + matching --------------------------------------------------------------------
     // NEVER inside a transaction (CLAUDE.md).
     const transcript = buildTranscript(messages, displayNames);
-    const prior = analysis.thread.lastAnalyzedTs ? await loadPrior(analysis.threadId, analysisId) : undefined;
+    const prior = cursor ? await loadPrior(analysis.threadId, analysis.requestedById, analysisId) : undefined;
     // The requester's name as the thread knows it, if they spoke in it; the cached row otherwise.
     const requester = { slackUserId: analysis.requestedBy.slackUserId, displayName: displayNames.get(analysis.requestedBy.slackUserId) ?? analysis.requestedBy.displayName };
     const userMessage = buildUserMessage(transcript, prior, requester);
@@ -134,15 +136,15 @@ export async function processAnalysis(analysisId: string, slack: SlackReader): P
 export type CommitInput = {
   analysisId: string;
   threadId: string;
-  throughTs: string; // newest ts in this batch; becomes the thread's new cursor
+  throughTs: string; // newest ts in this batch; becomes this requester's cursor once the row is DONE
   result: ModelCall<AnalysisOutput>; // what callClaude returned
   items: CarriedItem[]; // action items after matchAssignee, plus any owner carried over from the previous analysis
 };
 
-/** The previous DONE analysis of this thread, shaped for the prompt and for carrying owners forward. */
-export async function loadPrior(threadId: string, excludeAnalysisId: string): Promise<PriorAnalysis | undefined> {
+/** This requester's previous DONE analysis of the thread, shaped for the prompt and for carrying owners forward. */
+export async function loadPrior(threadId: string, requestedById: string, excludeAnalysisId: string): Promise<PriorAnalysis | undefined> {
   const prev = await prisma.analysis.findFirst({
-    where: { threadId, status: "DONE", id: { not: excludeAnalysisId } },
+    where: { threadId, requestedById, status: "DONE", id: { not: excludeAnalysisId } },
     orderBy: { createdAt: "desc" },
     include: { actionItems: { include: { assignee: { select: { slackUserId: true } } } }, drafts: { where: { status: "POSTED" }, select: { text: true } } },
   });
@@ -168,17 +170,14 @@ export async function commitAnalysis(input: CommitInput): Promise<void> {
   // Why the crash test passes:
   // 1. Everything below runs in one transaction, so it all commits or none of it does.
   //    If we crash halfway, the analysis stays RUNNING, no drafts or action items exist,
-  //    and lastAnalyzedTs hasn't moved. A retry starts clean.
+  //    and the requester's cursor hasn't moved. A retry starts clean.
   // 2. Duplicate drafts are blocked two ways. The `status: "RUNNING"` guard means only one
   //    worker can flip the analysis to DONE (the loser gets count === 0, throws, and rolls back).
   //    Behind that, the unique constraint on Draft(analysisId, type) rejects a second draft
   //    of the same type even if the guard somehow got bypassed.
-  // 3. All or nothing matters for the cursor. If lastAnalyzedTs moved forward but the drafts
-  //    didn't save, those messages would be skipped forever. If the drafts saved but the cursor
-  //    didn't move, the next run would re-read and re-analyze the same messages, and its commit
-  //    would then collide on unique (threadId, throughTs). The cursor has to move in the same
-  //    commit as the results it stands for, and analysis.throughTs is written here too, so the
-  //    row records exactly what the cursor now points at (decision #14).
+  // 3. All or nothing matters for the cursor. The requester's cursor IS analysis.throughTs on a DONE
+  //    row (decision #19), so it moves in the same statement that marks the results final: no way
+  //    for the cursor to advance without the drafts, or the drafts to exist without the cursor.
   await prisma.$transaction(async (tx) => {
     const out = input.result.output;
 
@@ -220,19 +219,22 @@ export async function commitAnalysis(input: CommitInput): Promise<void> {
       })),
     });
 
-    // 3. Drafts: one row per type
-    await tx.draft.createMany({
-      data: [
-        { analysisId: input.analysisId, type: "REPLY", text: out.drafts.reply },
-        { analysisId: input.analysisId, type: "SUMMARY", text: out.drafts.summary },
-        { analysisId: input.analysisId, type: "MEETING", text: out.drafts.meeting },
-        { analysisId: input.analysisId, type: "INVITE", text: out.drafts.invite },
-      ],
-    });
+    // 3. Drafts: only the kinds the model suggested, each with its reason (decision #19). Zero rows is a
+    //    valid outcome: "nothing for you to send".
+    const suggested = (
+      [
+        ["REPLY", out.drafts.reply],
+        ["SUMMARY", out.drafts.summary],
+        ["MEETING", out.drafts.meeting],
+        ["INVITE", out.drafts.invite],
+      ] as const
+    ).flatMap(([type, s]) => (s ? [{ analysisId: input.analysisId, type, text: s.text, reason: s.reason }] : []));
+    if (suggested.length > 0) await tx.draft.createMany({ data: suggested });
 
-    // 4. Move the cursor (last, same transaction)
-    await tx.thread.update({
-      where: { id: input.threadId },
+    // 4. The thread-level high-water mark, display only (the real cursor is per requester, derived from
+    //    DONE analyses). Only ever moves forward.
+    await tx.thread.updateMany({
+      where: { id: input.threadId, OR: [{ lastAnalyzedTs: null }, { lastAnalyzedTs: { lt: input.throughTs } }] },
       data: { lastAnalyzedTs: input.throughTs },
     });
   });

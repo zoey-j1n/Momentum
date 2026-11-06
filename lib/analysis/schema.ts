@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+// A draft the model chose to suggest, with the one-line reason the dashboard shows (decision #19). Each kind
+// is nullable rather than optional: structured outputs require every key, and null is the explicit "no".
+const Suggestion = z.object({
+  text: z.string().describe("The message, postable as-is"),
+  reason: z.string().describe("One short sentence on why this is worth posting now, e.g. 'Khoa asked you for the deploy date'"),
+});
+export type Suggestion = z.infer<typeof Suggestion>;
+
 export const AnalysisOutput = z.object({
   summary: z.string(),
   decision: z.string(),
@@ -16,11 +24,12 @@ export const AnalysisOutput = z.object({
         ),
     }),
   ),
+  // Only what the thread calls for. null = not suggested.
   drafts: z.object({
-    reply: z.string().describe("1 to 3 plain sentences that move the open item forward, postable as-is"),
-    summary: z.string().describe("A short recap suitable for posting in the thread"),
-    meeting: z.string().describe("A message suggesting a sync, with why"),
-    invite: z.string().describe("A meeting invite message: title, attendees by first name, agenda, and a placeholder for the link"),
+    reply: Suggestion.nullable().describe("Only when someone in the thread asked the requester something or is waiting on them: 1 to 3 plain sentences in the requester's voice"),
+    summary: Suggestion.nullable().describe("Only when the thread is long and reached a decision others outside it should know: a short recap"),
+    meeting: Suggestion.nullable().describe("Only when people in the thread are trying to find a time or say they should meet: a message proposing the sync, with why"),
+    invite: Suggestion.nullable().describe("Only alongside meeting, when the thread gives enough for an invite: title, attendees by first name, agenda, and the placeholder [meeting link]"),
   }),
   flaggedMessages: z
     .array(z.string())

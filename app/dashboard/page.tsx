@@ -125,8 +125,20 @@ export default async function ThreadReviewsPage({ searchParams }: { searchParams
                       </ul>
                     )}
                   </div>
+                  {/* "On you" (USER_FLOWS §3): the answer to "do I need to do anything?", pulled out of the full list. */}
                   <div className="divider-t" style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 18 }}>
-                    <h3 className="label" style={{ marginBottom: 6 }}>Action items · {analysis.actionItems.length}</h3>
+                    <h3 className="label" style={{ marginBottom: 6 }}>On you · {analysis.actionItems.filter((i) => i.assigneeId === ctx.user.id).length}</h3>
+                    {analysis.actionItems.filter((i) => i.assigneeId === ctx.user.id).length === 0 ? <p className="meta-13">Nothing on you in this thread.</p> : null}
+                    {analysis.actionItems.filter((i) => i.assigneeId === ctx.user.id).map((i) => (
+                      <ActionItemRow
+                        key={`mine-${i.id}`}
+                        users={users}
+                        item={{ id: i.id, task: i.task, assigneeId: i.assigneeId, assigneeName: i.assigneeName, assignmentSource: i.assignmentSource, assigneeConfirmed: i.assigneeConfirmed }}
+                      />
+                    ))}
+                  </div>
+                  <div className="divider-t" style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 18 }}>
+                    <h3 className="label" style={{ marginBottom: 6 }}>All action items · {analysis.actionItems.length}</h3>
                     {analysis.actionItems.length === 0 ? <p className="meta-13">No action items in this thread.</p> : null}
                     {analysis.actionItems.map((i) => (
                       <ActionItemRow
@@ -144,7 +156,7 @@ export default async function ThreadReviewsPage({ searchParams }: { searchParams
               <DraftsPanel
                 channel={selected.channelName ?? selected.channelId}
                 drafts={analysis.drafts.map((d): DraftView => ({
-                  id: d.id, type: d.type, text: d.text, status: d.status, lastError: d.lastError,
+                  id: d.id, type: d.type, text: d.text, reason: d.reason, status: d.status, lastError: d.lastError,
                   postedAt: d.postedAt?.toISOString() ?? null,
                   permalink: d.slackMessageTs ? slackPermalink(ws.name, selected.channelId, d.slackMessageTs) : null,
                   notionPageUrl: d.notionPageUrl,

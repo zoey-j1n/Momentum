@@ -39,9 +39,9 @@ async function main() {
   });
 
   // Nested create: the analysis, its action items, and its drafts are written in one transaction.
-  // The upsert key (threadId, throughTs) is what makes a second seed run a no-op.
+  // The upsert key (threadId, requestedById, throughTs) is what makes a second seed run a no-op (decision #19).
   await prisma.analysis.upsert({
-    where: { threadId_throughTs: { threadId: thread.id, throughTs: "1729650999.000100" } },
+    where: { threadId_requestedById_throughTs: { threadId: thread.id, requestedById: users["U0ZOEY"].id, throughTs: "1729650999.000100" } },
     update: {},
     create: {
       threadId: thread.id,

@@ -1,5 +1,6 @@
 "use client";
-// The Drafts card from Threads.dc.html: four tabs, an editable textarea, Reject / Approve and post.
+// The Drafts card from Threads.dc.html: a tab per suggested draft (decision #19: only what the thread calls
+// for), its reason, an editable textarea, Reject / Approve and post. No drafts is a good outcome, shown as such.
 // State lives in the database; this component only holds the text being edited and the last result.
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -9,6 +10,7 @@ export type DraftView = {
   id: string;
   type: "REPLY" | "SUMMARY" | "MEETING" | "INVITE";
   text: string;
+  reason: string | null;
   status: "SUGGESTED" | "APPROVED" | "REJECTED" | "POSTING" | "POSTED" | "FAILED";
   lastError: string | null;
   postedAt: string | null;
@@ -26,13 +28,24 @@ const TABS: { type: DraftView["type"]; label: string; hint: string; rows: number
 
 export function DraftsPanel({ drafts, channel }: { drafts: DraftView[]; channel: string }) {
   const router = useRouter();
-  const [tab, setTab] = useState<DraftView["type"]>(TABS.find((t) => drafts.some((d) => d.type === t.type))?.type ?? "REPLY");
+  const tabs = TABS.filter((t) => drafts.some((d) => d.type === t.type)); // only suggested kinds get a tab
+  const [tab, setTab] = useState<DraftView["type"]>(tabs[0]?.type ?? "REPLY");
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [result, setResult] = useState<ActionResult | null>(null);
   const [pending, start] = useTransition();
 
   const draft = drafts.find((d) => d.type === tab);
   const meta = TABS.find((t) => t.type === tab)!;
+
+  if (drafts.length === 0) {
+    return (
+      <section aria-labelledby="dr-h" className="card" style={{ padding: 22, display: "flex", flexDirection: "column", gap: 8 }}>
+        <h2 id="dr-h" style={{ fontSize: 16, fontWeight: 600 }}>Drafts</h2>
+        <p style={{ lineHeight: 1.55 }}>Nothing for you to send. You&rsquo;re caught up.</p>
+        <p className="meta-13">Momentum only drafts what the thread calls for: a reply when someone is waiting on you, a recap, or a meeting when people are trying to meet.</p>
+      </section>
+    );
+  }
 
   function run(fn: () => Promise<ActionResult>) {
     setResult(null);
@@ -48,7 +61,7 @@ export function DraftsPanel({ drafts, channel }: { drafts: DraftView[]; channel:
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
         <h2 id="dr-h" style={{ fontSize: 16, fontWeight: 600 }}>Drafts</h2>
         <div role="tablist" aria-label="Draft type" style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--border)" }}>
-          {TABS.map((t) => {
+          {tabs.map((t) => {
             const d = drafts.find((x) => x.type === t.type);
             return (
               <button key={t.type} type="button" role="tab" className="tab" aria-selected={tab === t.type} onClick={() => { setTab(t.type); setResult(null); }}>
@@ -64,6 +77,7 @@ export function DraftsPanel({ drafts, channel }: { drafts: DraftView[]; channel:
       ) : (
         <>
           <label htmlFor={`d-${draft.id}`} className="meta-13">{meta.hint} · #{channel}</label>
+          {draft.reason ? <p style={{ fontSize: 13, lineHeight: 1.5, padding: "8px 12px", borderLeft: "3px solid var(--accent)", background: "var(--surface-2, transparent)" }}><span className="label" style={{ marginRight: 6 }}>Why</span>{draft.reason}</p> : null}
           <textarea
             id={`d-${draft.id}`}
             className="field"
