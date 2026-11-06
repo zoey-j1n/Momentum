@@ -34,6 +34,8 @@
         "im:history",
         "mpim:history",
         "users:read",
+        "channels:read",
+        "groups:read",
         "chat:write"
       ],
       "user": [

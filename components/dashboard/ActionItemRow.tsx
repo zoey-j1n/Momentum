@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { setAssigneeAction, type ActionResult } from "@/app/dashboard/actions";
+import { isUnassignedOwner, ownerCandidates } from "@/lib/analysis/matchAssignees";
 
 export type ItemView = {
   id: string;
@@ -30,6 +31,14 @@ export function ActionItemRow({ item, users }: { item: ItemView; users: UserOpti
   const chosen = users.find((u) => u.id === value);
   const initials = (chosen?.displayName ?? "?").split(/[\s.]+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   const dirty = value !== (item.assigneeId ?? "");
+  // Why there is no owner, in words that say what to do (decision #10): unassigned, nobody by that name, or several.
+  const candidates = !item.assigneeId && !isUnassignedOwner(item.assigneeName) ? ownerCandidates(item.assigneeName, users) : [];
+  const hint = item.assigneeId ? null
+    : isUnassignedOwner(item.assigneeName) ? "No owner yet."
+    : candidates.length === 0 ? `Nobody in the workspace is called “${item.assigneeName}”. Pick an owner.`
+    : `${candidates.length} people match “${item.assigneeName}”: ${candidates.map((c) => c.displayName).join(", ")}. Pick one.`;
+  // Ambiguous names: list the matching people first in the picker.
+  const ordered = candidates.length >= 2 ? [...candidates, ...users.filter((u) => !candidates.includes(u))] : users;
 
   function save() {
     setResult(null);
@@ -49,7 +58,7 @@ export function ActionItemRow({ item, users }: { item: ItemView; users: UserOpti
           Owner
           <select className={`select ${!value ? "select-warn" : ""}`} value={value} onChange={(e) => setValue(e.target.value)} disabled={pending}>
             <option value="">{item.assigneeId ? "No owner" : "Pick an owner"}</option>
-            {users.map((u) => (
+            {ordered.map((u) => (
               <option key={u.id} value={u.id}>{u.displayName}{u.id === item.assigneeId && item.assignmentSource !== "MANUAL" ? ` · ${SOURCE_LABEL[item.assignmentSource]}` : ""}</option>
             ))}
           </select>
@@ -58,7 +67,7 @@ export function ActionItemRow({ item, users }: { item: ItemView; users: UserOpti
           {item.assigneeConfirmed && !dirty ? "Confirmed" : dirty ? "Save" : "Confirm"}
         </button>
       </div>
-      {!item.assigneeId && item.assigneeName ? <span className="meta" style={{ paddingLeft: 36 }}>The model said “{item.assigneeName}”, which did not match exactly one person.</span> : null}
+      {hint ? <span className="meta" style={{ paddingLeft: 36 }}>{hint}</span> : null}
       {result && !result.ok ? <div className="error-line" style={{ marginLeft: 36 }}>{result.error}</div> : null}
     </div>
   );

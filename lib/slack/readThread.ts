@@ -1,7 +1,7 @@
 // The one thing the handler needs from Slack: "give me this thread's messages, newest first optional".
 // It's an interface so the worker can run against a fake (sample thread, crash test)
 // and so tests can hand the handler a thread that throws, hangs, or changes between calls.
-import type { SlackMessage } from "../analysis/transcript";
+import { mentionedUserIds, type SlackMessage } from "../analysis/transcript";
 import type { WebClient } from "@slack/web-api";
 import { NON_RETRYABLE_SLACK_ERRORS, slackClient, slackErrorCode } from "./client";
 import { NonRetryableError } from "../jobs/errors";
@@ -16,8 +16,13 @@ export interface SlackReader {
    */
   readThread(ref: ThreadRef, afterTs: string | null): Promise<{
     messages: SlackMessage[];
-    users: Map<string, { displayName: string; realName?: string }>;
+    users: Map<string, { displayName: string; realName?: string }>; // authors AND mentioned users
   }>;
+  /**
+   * Everyone in the channel, with names (decision #10 addendum: the right owner may not have seen the thread).
+   * Best effort: an error or a missing scope returns an empty map and the analysis goes on without it.
+   */
+  channelMembers(channelId: string): Promise<Map<string, { displayName: string; realName?: string }>>;
 }
 
 // The hand-written thread from scripts/analyze-sample.ts. Two Alexes exist in the workspace
@@ -43,7 +48,12 @@ export class FakeSlackReader implements SlackReader {
   constructor(
     private messages: SlackMessage[] = SAMPLE_THREAD,
     private users = SAMPLE_USERS,
+    private members: Map<string, { displayName: string; realName?: string }> = new Map(),
   ) {}
+
+  async channelMembers(_channelId: string) {
+    return this.members;
+  }
 
   async readThread(_ref: ThreadRef, afterTs: string | null) {
     // Crash-test helper: CRASH_TEST_PAUSE_MS=30000 gives you a 30-second window to kill the worker mid-job.
@@ -100,19 +110,45 @@ export class SlackWebReader implements SlackReader {
 
     const messages = afterTs === null ? raw : raw.filter((m) => m.ts > afterTs);
 
+    // Names for everyone who spoke AND everyone who was @-mentioned, so a silent mentioned person is a
+    // real participant with a real name, not "unknown (U...)".
+    const users = await this.lookupUsers(slack, [...new Set([...messages.map((m) => m.user), ...mentionedUserIds(messages)])]);
+    return { messages, users };
+  }
+
+  async channelMembers(channelId: string) {
+    const slack = this.client();
+    const ids: string[] = [];
+    try {
+      let cursor: string | undefined;
+      do {
+        const page = await slack.conversations.members({ channel: channelId, limit: 200, cursor });
+        ids.push(...(page.members ?? []));
+        cursor = page.response_metadata?.next_cursor || undefined;
+      } while (cursor && ids.length < 200);
+    } catch (err) {
+      // missing_scope (channels:read / groups:read not granted) or a channel the bot cannot see: carry on without.
+      console.warn(`[slack] conversations.members failed for ${channelId}: ${slackErrorCode(err) ?? String(err)}`);
+      return new Map();
+    }
+    return this.lookupUsers(slack, ids);
+  }
+
+  private async lookupUsers(slack: WebClient, ids: string[]) {
     const users = new Map<string, { displayName: string; realName?: string }>();
-    for (const id of new Set(messages.map((m) => m.user))) {
+    for (const id of ids) {
       try {
         const { user } = await slack.users.info({ user: id });
+        if (user?.is_bot || user?.deleted) continue; // bots and deactivated accounts are not owners
         const p = user?.profile;
         users.set(id, {
           displayName: p?.display_name_normalized || p?.display_name || user?.real_name || id,
           realName: user?.real_name ?? undefined,
         });
       } catch {
-        users.set(id, { displayName: id }); // deactivated or unknown user: keep the ID, never block the analysis
+        users.set(id, { displayName: id }); // unknown user: keep the ID, never block the analysis
       }
     }
-    return { messages, users };
+    return users;
   }
 }

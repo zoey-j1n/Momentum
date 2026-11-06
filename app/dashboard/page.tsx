@@ -7,6 +7,7 @@ import { Shell } from "@/components/dashboard/Shell";
 import { DraftsPanel, type DraftView } from "@/components/dashboard/DraftsPanel";
 import { ActionItemRow } from "@/components/dashboard/ActionItemRow";
 import { AutoRefresh } from "@/components/dashboard/AutoRefresh";
+import { LocalTime } from "@/components/dashboard/LocalTime";
 import { currentContext } from "@/lib/dashboard/workspace";
 import { ago, failedNotionExports, listThreads, listWorkspaceUsers, matchesFilter, pickAnalysis, sidebarCounts, slackPermalink, threadTitle, type Filter } from "@/lib/dashboard/queries";
 
@@ -87,12 +88,12 @@ export default async function ThreadReviewsPage({ searchParams }: { searchParams
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   <h2 style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.01em" }}>{threadTitle(analysis)}</h2>
                   <span className="meta-13">
-                    {analysis ? `Ran ${analysis.createdAt.toLocaleDateString(undefined, { month: "short", day: "numeric" })} at ${analysis.createdAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}` : "Queued"}
+                    {analysis ? <>Ran <LocalTime iso={analysis.createdAt.toISOString()} /></> : "Queued"}
                     {" · "}{selected.channelName ? `#${selected.channelName}` : "channel name arrives on the next catch-up"}
                   </span>
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <a className="btn" href={slackPermalink(ws.name, selected.channelId, selected.threadTs)} target="_blank" rel="noreferrer">Open in Slack</a>
+                  <a className="btn" href={slackPermalink(selected.channelId, selected.threadTs)} target="_blank" rel="noreferrer">Open in Slack</a>
                 </div>
               </div>
 
@@ -158,7 +159,7 @@ export default async function ThreadReviewsPage({ searchParams }: { searchParams
                 drafts={analysis.drafts.map((d): DraftView => ({
                   id: d.id, type: d.type, text: d.text, reason: d.reason, status: d.status, lastError: d.lastError,
                   postedAt: d.postedAt?.toISOString() ?? null,
-                  permalink: d.slackMessageTs ? slackPermalink(ws.name, selected.channelId, d.slackMessageTs) : null,
+                  permalink: d.slackMessageTs ? slackPermalink(selected.channelId, d.slackMessageTs) : null,
                   notionPageUrl: d.notionPageUrl,
                   notionError: notionFailures.get(d.id) ?? null,
                 }))}

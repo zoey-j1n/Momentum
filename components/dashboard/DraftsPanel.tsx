@@ -20,10 +20,10 @@ export type DraftView = {
 };
 
 const TABS: { type: DraftView["type"]; label: string; hint: string; rows: number }[] = [
-  { type: "REPLY", label: "Reply", hint: "Reply in the thread", rows: 5 },
-  { type: "SUMMARY", label: "Summary", hint: "Recap posted to the thread", rows: 9 },
-  { type: "MEETING", label: "Meeting", hint: "Suggest a sync in the thread", rows: 4 },
-  { type: "INVITE", label: "Invite", hint: "Invite text, posted in the thread for now. Calendar invites come later.", rows: 6 },
+  { type: "REPLY", label: "Reply", hint: "Reply, in your voice", rows: 5 },
+  { type: "SUMMARY", label: "Recap", hint: "Recap of what was discussed and concluded, for the thread or an email", rows: 9 },
+  { type: "MEETING", label: "Meeting", hint: "Propose a sync", rows: 4 },
+  { type: "INVITE", label: "Invite", hint: "Invite text: paste into the thread, an email, or a calendar event", rows: 6 },
 ];
 
 export function DraftsPanel({ drafts, channel }: { drafts: DraftView[]; channel: string }) {

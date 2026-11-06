@@ -9,7 +9,8 @@
  *   - throw a NonRetryableError -> the queue marks the job FAILED immediately (refusal, bad schema)
  */
 import { prisma } from "../db";
-import { buildTranscript } from "../analysis/transcript";
+import { addParticipants, buildTranscript, type Participant } from "../analysis/transcript";
+import { verifyEvidence } from "../analysis/evidence";
 import { SYSTEM_PROMPT, buildUserMessage } from "../analysis/prompt";
 import { requesterCursor } from "../analysis/cursor";
 import { AnalysisOutput } from "../analysis/schema";
@@ -69,7 +70,11 @@ export async function processAnalysis(analysisId: string, slack: SlackReader): P
     const throughTs = messages.reduce((max, m) => (m.ts.localeCompare(max) > 0 ? m.ts : max), messages[0].ts);
 
     // ---- Step 3: upsert SlackUsers --------------------------------------------------------------------
-    // One upsert per user seen in the thread, keyed on @@unique([workspaceId, slackUserId]).
+    // Everyone we have a fresh name for: authors, mentioned users, and channel members (decision #10
+    // addendum). The requester's row gets its real name here too, replacing the shortcut payload's handle.
+    const members = await slack.channelMembers(analysis.thread.channelId); // best effort; empty if the scope is missing
+    for (const [id, u] of members) if (!users.has(id)) users.set(id, u);
+    // One upsert per user, keyed on @@unique([workspaceId, slackUserId]).
     // Outside the transaction on purpose: it is idempotent and must not hold a transaction open across
     // the network call in step 4. A loop is fine for a thread's handful of people; a thread with hundreds
     // of participants would want one createMany with skipDuplicates plus a batched update.
@@ -91,10 +96,14 @@ export async function processAnalysis(analysisId: string, slack: SlackReader): P
 
     // ---- Step 4: Claude + matching --------------------------------------------------------------------
     // NEVER inside a transaction (CLAUDE.md).
-    const transcript = buildTranscript(messages, displayNames);
-    const prior = cursor ? await loadPrior(analysis.threadId, analysis.requestedById, analysisId) : undefined;
-    // The requester's name as the thread knows it, if they spoke in it; the cached row otherwise.
+    const built = buildTranscript(messages, displayNames);
+    // The requester's name as Slack knows it (users.info above), or the cached row.
     const requester = { slackUserId: analysis.requestedBy.slackUserId, displayName: displayNames.get(analysis.requestedBy.slackUserId) ?? analysis.requestedBy.displayName };
+    // Participants = spoke + mentioned (from the transcript), then the requester, then channel members.
+    // Earlier roles win, so a requester who spoke stays "spoke".
+    const channelPeople: Participant[] = [...members].map(([slackUserId, u]) => ({ slackUserId, displayName: u.displayName, role: "channel" as const }));
+    const transcript = { ...built, participants: addParticipants(addParticipants(built.participants, [{ ...requester, role: "requester" as const }]), channelPeople) };
+    const prior = cursor ? await loadPrior(analysis.threadId, analysis.requestedById, analysisId) : undefined;
     const userMessage = buildUserMessage(transcript, prior, requester);
 
     let result: ModelCall<AnalysisOutput>;
@@ -107,11 +116,14 @@ export async function processAnalysis(analysisId: string, slack: SlackReader): P
       throw err;
     }
 
-    const matched = result.output.actionItems.map((ai) => ({
-      task: ai.task,
-      owner: ai.owner,
-      match: matchAssignee(ai.owner, transcript.participants, workspaceUsers),
-    }));
+    // Evidence check (Zoey, 2026-11-06): an item whose quote is not in the transcript is an inference. Dropped, logged.
+    const { kept, dropped } = verifyEvidence(result.output.actionItems, transcript.transcript);
+    if (dropped.length > 0) console.warn(`[analysis ${analysisId}] dropped ${dropped.length} unverified item(s): ${dropped.map((d) => `"${d.task}" (evidence: "${d.evidence}")`).join("; ")}`);
+    const matched = kept.map((ai) => {
+      const match = matchAssignee(ai.owner, transcript.participants, workspaceUsers);
+      console.log(`[analysis ${analysisId}] owner="${ai.owner}" -> ${match.source}${match.candidates.length ? ` candidates=[${match.candidates.map((c) => `${c.displayName}(${c.slackUserId})`).join(", ")}]` : ""}`);
+      return { task: ai.task, owner: ai.owner, match };
+    });
     // A reviewer's confirmed owner outranks the model's new guess for the same task (decision #17).
     const items = prior ? carryOverAssignees(matched, prior.actionItems) : matched;
 

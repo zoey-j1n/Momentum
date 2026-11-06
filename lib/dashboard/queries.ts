@@ -66,8 +66,9 @@ export function threadTitle(a: AnalysisRow | undefined): string {
   return first.length > 90 ? first.slice(0, 87) + "…" : first || "Untitled thread";
 }
 
-export function slackPermalink(domain: string, channelId: string, ts: string): string {
-  return `https://${domain}.slack.com/archives/${channelId}/p${ts.replace(".", "")}`;
+/** slack.com/archives works for any workspace: Slack redirects to the viewer's own. No domain needed (Workspace.name is a display name, not a subdomain). */
+export function slackPermalink(channelId: string, ts: string): string {
+  return `https://slack.com/archives/${channelId}/p${ts.replace(".", "")}`;
 }
 
 export function ago(d: Date): string {
