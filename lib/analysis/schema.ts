@@ -22,7 +22,7 @@ export const AnalysisOutput = z.object({
         .describe(
           'A Slack user ID from the people lists when the thread makes the owner clear; otherwise a plain name; otherwise "Team"',
         ),
-      evidence: z.string().describe("The exact words from one message that state or ask for this task, 5 to 20 words, copied verbatim"),
+      evidence: z.string().describe("5 to 20 words from the message that states or asks for this task, copied as they appear in the transcript"),
     }),
   ),
   // Every kind the thread calls for, none that it does not. null = not relevant to this thread.
