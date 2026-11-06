@@ -1,12 +1,18 @@
 {
-  "_metadata": { "major_version": 2, "minor_version": 1 },
+  "_metadata": {
+    "major_version": 2,
+    "minor_version": 1
+  },
   "display_information": {
     "name": "Momentum",
     "description": "Catch up on a Slack thread: summary, action items, and drafted follow-ups you approve before they post.",
     "background_color": "#1f2937"
   },
   "features": {
-    "bot_user": { "display_name": "Momentum", "always_online": false },
+    "bot_user": {
+      "display_name": "Momentum",
+      "always_online": false
+    },
     "shortcuts": [
       {
         "name": "Catch up with Momentum",
@@ -17,6 +23,9 @@
     ]
   },
   "oauth_config": {
+    "redirect_urls": [
+      "https://REPLACE-WITH-YOUR-TUNNEL-HOST/api/slack/oauth/callback"
+    ],
     "scopes": {
       "bot": [
         "commands",
@@ -25,6 +34,9 @@
         "im:history",
         "mpim:history",
         "users:read",
+        "chat:write"
+      ],
+      "user": [
         "chat:write"
       ]
     }

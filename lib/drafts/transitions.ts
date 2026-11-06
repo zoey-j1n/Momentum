@@ -1,6 +1,8 @@
 // lib/drafts/transitions.ts
 // The ONLY module that changes Draft.status. Every transition: conditional updateMany + audit event, one transaction.
 import { prisma } from "../db";
+import { enqueue } from "../jobs/queue";
+import { notionConfigured } from "../notion";
 
 export class TransitionError extends Error {
   constructor(message: string) {
@@ -78,6 +80,12 @@ export async function markPosted(draftId: string, workspaceId: string, slackMess
     await tx.auditEvent.create({
       data: { workspaceId, actorId: null, entityType: "Draft", entityId: draftId, action: "posted", fromStatus: "POSTING", toStatus: "POSTED" },
     });
+    // Decision #18: a posted invite gets a Notion meeting page. The job row commits with the status change,
+    // so "POSTED invite with no export job" cannot exist. The worker does the Notion call, never this code.
+    if (notionConfigured()) {
+      const d = await tx.draft.findUniqueOrThrow({ where: { id: draftId }, select: { type: true } });
+      if (d.type === "INVITE") await enqueue("notion_export", { draftId }, { db: tx });
+    }
   });
 }
 

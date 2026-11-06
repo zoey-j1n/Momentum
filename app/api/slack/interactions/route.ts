@@ -45,6 +45,16 @@ export async function POST(req: Request): Promise<Response> {
     });
     if (!res.ok) console.warn(`[slack ingress] ack failed: ${res.status} ${await res.text()}`);
   });
+  //    And wake the job runner so the analysis starts now, not at the next cron tick (decision #9). Only when
+  //    the runner secret is configured, i.e. in production; locally `npm run worker` is polling.
+  const runnerSecret = process.env.JOBS_RUN_SECRET;
+  if (result.kind === "queued" && runnerSecret) {
+    after(async () => {
+      const base = process.env.NEXT_PUBLIC_BASE_URL ?? new URL(req.url).origin;
+      const res = await fetch(`${base}/api/jobs/run`, { method: "POST", headers: { "x-jobs-secret": runnerSecret } }).catch((e) => e as Error);
+      if (res instanceof Error || !res.ok) console.warn(`[slack ingress] runner kick failed: ${res instanceof Error ? res.message : res.status}`);
+    });
+  }
 
   // 6. Done-when: this number stays well under 3,000.
   console.log(`[slack ingress] ${result.kind} thread=${result.threadId} in ${Date.now() - started}ms`);

@@ -13,7 +13,8 @@ import { buildTranscript } from "../analysis/transcript";
 import { SYSTEM_PROMPT, buildUserMessage } from "../analysis/prompt";
 import { AnalysisOutput } from "../analysis/schema";
 import { callClaude, ModelCall, ModelOutputError } from "../analysis/client";
-import { Match, matchAssignee } from "../analysis/matchAssignees";
+import { matchAssignee } from "../analysis/matchAssignees";
+import { carryOverAssignees, type CarriedItem, type PriorAnalysis } from "../analysis/prior";
 import type { SlackReader } from "../slack/readThread";
 import { Prisma } from "@/generated/prisma/client";
 import { NonRetryableError } from "../jobs/errors";
@@ -38,7 +39,7 @@ export async function processAnalysis(analysisId: string, slack: SlackReader): P
   // step 5's conditional update to DONE makes it harmless.
   const analysis = await prisma.analysis.findUnique({
     where: { id: analysisId },
-    include: { thread: true },
+    include: { thread: true, requestedBy: { select: { displayName: true, slackUserId: true } } },
   });
   if (!analysis) {
     throw new NonRetryableError(`analysis ${analysisId} disappeared after the update`);
@@ -89,7 +90,10 @@ export async function processAnalysis(analysisId: string, slack: SlackReader): P
     // ---- Step 4: Claude + matching --------------------------------------------------------------------
     // NEVER inside a transaction (CLAUDE.md).
     const transcript = buildTranscript(messages, displayNames);
-    const userMessage = buildUserMessage(transcript);
+    const prior = analysis.thread.lastAnalyzedTs ? await loadPrior(analysis.threadId, analysisId) : undefined;
+    // The requester's name as the thread knows it, if they spoke in it; the cached row otherwise.
+    const requester = { slackUserId: analysis.requestedBy.slackUserId, displayName: displayNames.get(analysis.requestedBy.slackUserId) ?? analysis.requestedBy.displayName };
+    const userMessage = buildUserMessage(transcript, prior, requester);
 
     let result: ModelCall<AnalysisOutput>;
     try {
@@ -101,11 +105,13 @@ export async function processAnalysis(analysisId: string, slack: SlackReader): P
       throw err;
     }
 
-    const items = result.output.actionItems.map((ai) => ({
+    const matched = result.output.actionItems.map((ai) => ({
       task: ai.task,
       owner: ai.owner,
       match: matchAssignee(ai.owner, transcript.participants, workspaceUsers),
     }));
+    // A reviewer's confirmed owner outranks the model's new guess for the same task (decision #17).
+    const items = prior ? carryOverAssignees(matched, prior.actionItems) : matched;
 
     // ---- Step 5: the one transaction ------------------------------------------------------------------
     await commitAnalysis({ analysisId, threadId: analysis.threadId, throughTs, result, items });
@@ -130,8 +136,33 @@ export type CommitInput = {
   threadId: string;
   throughTs: string; // newest ts in this batch; becomes the thread's new cursor
   result: ModelCall<AnalysisOutput>; // what callClaude returned
-  items: { task: string; owner: string; match: Match }[]; // action items after matchAssignee
+  items: CarriedItem[]; // action items after matchAssignee, plus any owner carried over from the previous analysis
 };
+
+/** The previous DONE analysis of this thread, shaped for the prompt and for carrying owners forward. */
+export async function loadPrior(threadId: string, excludeAnalysisId: string): Promise<PriorAnalysis | undefined> {
+  const prev = await prisma.analysis.findFirst({
+    where: { threadId, status: "DONE", id: { not: excludeAnalysisId } },
+    orderBy: { createdAt: "desc" },
+    include: { actionItems: { include: { assignee: { select: { slackUserId: true } } } }, drafts: { where: { status: "POSTED" }, select: { text: true } } },
+  });
+  if (!prev) return undefined;
+  return {
+    summary: prev.summary ?? "",
+    decision: prev.decision ?? "",
+    nextStep: prev.nextStep ?? "",
+    openQuestions: prev.openQuestions,
+    actionItems: prev.actionItems.map((i) => ({
+      task: i.task,
+      assigneeId: i.assigneeId,
+      assigneeSlackUserId: i.assignee?.slackUserId ?? null,
+      assigneeConfirmed: i.assigneeConfirmed,
+      assignmentSource: i.assignmentSource,
+      done: i.done,
+    })),
+    postedDrafts: prev.drafts.map((d) => d.text),
+  };
+}
 
 export async function commitAnalysis(input: CommitInput): Promise<void> {
   // Why the crash test passes:
@@ -182,8 +213,10 @@ export async function commitAnalysis(input: CommitInput): Promise<void> {
         analysisId: input.analysisId,
         task: item.task,
         assigneeName: item.owner, // verbatim from the model
-        assigneeId: item.match.assigneeId,
-        assignmentSource: item.match.source,
+        assigneeId: item.carried ? item.carried.assigneeId : item.match.assigneeId,
+        assignmentSource: item.carried ? "MANUAL" : item.match.source,
+        assigneeConfirmed: item.carried !== undefined,
+        done: item.carried?.done ?? false,
       })),
     });
 

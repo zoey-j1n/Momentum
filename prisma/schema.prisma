@@ -72,6 +72,10 @@ model SlackUser {
   displayName String
   realName    String?
   refreshedAt DateTime  @default(now())
+  // Sign in with Slack (decision #9): this person's own xoxp- token, AES-256-GCM encrypted (lib/crypto/tokens.ts).
+  // Null until they authorize the app. Used by sendDraft so a post appears under their name (decision #15).
+  userTokenEnc       String?
+  userTokenUpdatedAt DateTime?
 
   // One person can appear in three roles. Each role is its own relation.
   requestedAnalyses Analysis[]
@@ -90,6 +94,7 @@ model Thread {
   workspace      Workspace @relation(fields: [workspaceId], references: [id])
   channelId      String
   threadTs       String // Slack timestamps are strings like "1729650000.123456" -- never floats (decision #2)
+  channelName    String? // display only ("#launch"); from the shortcut payload, refreshed on every click. Milestone 6
   lastAnalyzedTs String? // cursor: newest message already analyzed. Null until the first analysis finishes, so the worker knows to read the whole thread
   createdAt      DateTime  @default(now())
 
@@ -164,6 +169,7 @@ model Draft {
   slackMessageTs String? // which Slack message we created
   lastError      String? // why the last post attempt failed
   postedAt       DateTime?
+  notionPageUrl  String? // INVITE drafts only: the meeting page the worker created after the post (decision #18)
   updatedAt      DateTime    @updatedAt
 
   @@unique([analysisId, type]) // at most one REPLY, one SUMMARY, ... per analysis

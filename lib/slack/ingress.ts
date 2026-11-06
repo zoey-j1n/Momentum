@@ -12,11 +12,12 @@ export const MessageActionPayload = z.object({
   type: z.literal("message_action"),
   callback_id: z.literal("catch_up"), // the shortcut's id in slack/manifest.json
   team: z.object({ id: z.string().min(1), domain: z.string().optional() }),
-  channel: z.object({ id: z.string().min(1) }),
+  channel: z.object({ id: z.string().min(1), name: z.string().optional() }),
   user: z.object({ id: z.string().min(1), username: z.string().optional(), name: z.string().optional() }),
   message: z.object({
     ts: z.string().min(1), // the clicked message (decision #2: strings, never numbers)
     thread_ts: z.string().optional(), // present only when the clicked message is a reply
+    latest_reply: z.string().optional(), // sometimes present on a parent message: ts of its newest reply (not promised by the docs)
   }),
   response_url: z.url(), // where the ephemeral acknowledgement goes (decision #11)
 });
@@ -27,32 +28,50 @@ export type CatchUpResult =
   | { kind: "already_queued"; threadId: string } // an analysis is already PENDING or RUNNING for this thread
   | { kind: "caught_up"; threadId: string }; // the clicked message is already covered by the last analysis
 
+// Prisma's upsert is "select, then insert or update", not one atomic statement, so two requests arriving
+// together can both select nothing and both insert; the unique constraint rejects the loser with P2002.
+// Every upsert here is idempotent, so the loser just runs it again and finds the winner's row.
+async function upsertRacing<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") return await fn();
+    throw err;
+  }
+}
+
 export async function catchUp(p: MessageActionPayload): Promise<CatchUpResult> {
   // Slack has no thread ids. A thread is the ts of its first message: thread_ts if we clicked a reply,
   // otherwise the clicked message is the parent and its own ts is the thread.
   const threadTs = p.message.thread_ts ?? p.message.ts;
 
   // Three upserts, all keyed on Slack's own ids, so repeated clicks find the same rows.
-  const workspace = await prisma.workspace.upsert({
+  const workspace = await upsertRacing(() => prisma.workspace.upsert({
     where: { slackTeamId: p.team.id },
     update: {},
     create: { slackTeamId: p.team.id, name: p.team.domain ?? p.team.id },
-  });
-  const requester = await prisma.slackUser.upsert({
+  }));
+  const requester = await upsertRacing(() => prisma.slackUser.upsert({
     where: { workspaceId_slackUserId: { workspaceId: workspace.id, slackUserId: p.user.id } },
     update: {}, // the worker refreshes names from users.info; the payload's username is only a first guess
     create: { workspaceId: workspace.id, slackUserId: p.user.id, displayName: p.user.username ?? p.user.name ?? p.user.id },
-  });
-  const thread = await prisma.thread.upsert({
+  }));
+  const thread = await upsertRacing(() => prisma.thread.upsert({
     where: { workspaceId_channelId_threadTs: { workspaceId: workspace.id, channelId: p.channel.id, threadTs } },
-    update: {},
-    create: { workspaceId: workspace.id, channelId: p.channel.id, threadTs },
-  });
+    update: { channelName: p.channel.name }, // channels get renamed; the payload always has the current name
+    create: { workspaceId: workspace.id, channelId: p.channel.id, threadTs, channelName: p.channel.name },
+  }));
 
-  // Early refusal with no Slack call: the clicked message is at or before the cursor, so the last
-  // analysis already covered it. (String compare is valid: Slack ts values have a fixed width.)
-  if (thread.lastAnalyzedTs !== null && p.message.ts <= thread.lastAnalyzedTs) {
-    return { kind: "caught_up", threadId: thread.id };
+  // Early refusal with no Slack call (string compare is valid: Slack ts values have a fixed width).
+  // A click on a REPLY at or before the cursor: that message was already covered. A click on the PARENT
+  // means "catch up on whatever is new", and the parent's ts is always old, so it is never refused on
+  // its own; only if Slack included latest_reply and that is also covered. Otherwise the worker finds out.
+  if (thread.lastAnalyzedTs !== null) {
+    const isReply = p.message.thread_ts !== undefined && p.message.thread_ts !== p.message.ts;
+    const newestKnown = isReply ? p.message.ts : p.message.latest_reply;
+    if (newestKnown !== undefined && newestKnown <= thread.lastAnalyzedTs) {
+      return { kind: "caught_up", threadId: thread.id };
+    }
   }
 
   // The analysis row and its job commit together. Without the transaction, a crash between the two

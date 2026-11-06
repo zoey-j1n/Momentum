@@ -13,3 +13,6 @@ generated/
 
 # Design docs and notes stay local
 docs/
+
+# Tests are kept locally only. They still run with `npm test`.
+tests/
