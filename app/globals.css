@@ -66,3 +66,14 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .queue-row:hover { background: var(--bg); }
 .avatar { width: 26px; height: 26px; border-radius: 50%; background: var(--accent-soft); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; flex: none; }
 .error-line { font-size: 13px; color: var(--warn-text); background: var(--warn-bg); border-radius: 8px; padding: 10px 12px; }
+
+/* Action item rows: a grid with fixed control columns so every row's checkboxes, owner picker, and button
+   line up. Only the task column flexes. The note line sits under the task, aligned with it. */
+.item-row { display: grid; grid-template-columns: 26px minmax(0, 1fr) 84px 72px 240px 96px; column-gap: 10px; row-gap: 4px; align-items: center; padding: 8px 0; }
+.item-check { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.item-owner { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.item-note { grid-column: 2 / -1; }
+@media (max-width: 900px) {
+  .item-row { grid-template-columns: 26px minmax(0, 1fr) 84px 72px; }
+  .item-owner, .item-row > .btn { grid-column: 2 / -1; }
+}

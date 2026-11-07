@@ -125,7 +125,7 @@ export default async function ThreadReviewsPage({ searchParams }: { searchParams
                       {analysis.needResponse ? <span className="badge badge-warn">Needs response</span> : <span className="badge badge-ok">Caught up</span>}
                     </div>
                     {analysis.openQuestions.length === 0 ? <p className="meta-13">None.</p> : (
-                      <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 6, lineHeight: 1.45 }}>
+                      <ul style={{ margin: 0, paddingLeft: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 6, lineHeight: 1.45 }}>
                         {analysis.openQuestions.map((q, i) => <li key={i}>{q}</li>)}
                       </ul>
                     )}
