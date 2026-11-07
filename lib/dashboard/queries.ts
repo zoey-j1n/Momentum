@@ -80,12 +80,14 @@ export function ago(d: Date): string {
 }
 
 /** Failed Notion exports, keyed by draft id, so the dashboard can say why instead of "creating…" forever. */
-export async function failedNotionExports(): Promise<Map<string, string>> {
-  const jobs = await prisma.job.findMany({ where: { type: "notion_export", status: "FAILED" }, select: { payload: true, lastError: true } });
-  const out = new Map<string, string>();
+/** Per draft: is a Notion export queued/running, or did it fail (with why)? Drives "creating…" and the error line. */
+export async function notionExportStates(): Promise<Map<string, { state: "pending" | "failed"; error?: string }>> {
+  const jobs = await prisma.job.findMany({ where: { type: "notion_export", status: { in: ["QUEUED", "RUNNING", "FAILED"] } }, select: { payload: true, status: true, lastError: true }, orderBy: { createdAt: "asc" } });
+  const out = new Map<string, { state: "pending" | "failed"; error?: string }>();
   for (const j of jobs) {
-    const draftId = (j.payload as { draftId?: string })?.draftId;
-    if (draftId) out.set(draftId, j.lastError ?? "failed");
+    const draftId = (j.payload as { draftId?: string }).draftId;
+    if (!draftId) continue;
+    out.set(draftId, j.status === "FAILED" ? { state: "failed", error: j.lastError ?? "unknown error" } : { state: "pending" });
   }
   return out;
 }

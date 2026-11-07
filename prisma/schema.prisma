@@ -40,6 +40,7 @@ enum DraftType {
   SUMMARY
   MEETING
   INVITE
+  NEXT_STEPS // built by code from the action items, posted by the Momentum bot (decision #21)
 }
 
 enum AssignmentSource {
@@ -154,6 +155,8 @@ model ActionItem {
   assignmentSource  AssignmentSource @default(NONE)
   assigneeConfirmed Boolean          @default(false)
   done              Boolean          @default(false)
+  include           Boolean          @default(true) // goes into the Next steps post (decision #21)
+  announcedInDraftId String? // the NEXT_STEPS draft that posted it; null until announced
 }
 
 model Draft {

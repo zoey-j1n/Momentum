@@ -40,7 +40,7 @@ export async function sendDraft(
 ): Promise<SendDraftResult> {
   const draft = await prisma.draft.findFirst({
     where: { id: draftId, analysis: { thread: { workspaceId } } },
-    select: { status: true, text: true, analysis: { select: { thread: { select: { channelId: true, threadTs: true } } } } },
+    select: { status: true, text: true, type: true, analysis: { select: { thread: { select: { channelId: true, threadTs: true } } } } },
   });
   if (!draft) throw new Error(`draft ${draftId} not found in workspace`);
 
@@ -63,15 +63,18 @@ export async function sendDraft(
   // 3. The approver's own token (decision #15). Missing or unreadable: fail the draft with a reason the
   //    dashboard shows; Retry works after they sign in again. Checked after the claim so the outcome is
   //    recorded on the row, not just in this response.
-  const approver = await prisma.slackUser.findFirst({ where: { id: actorId, workspaceId }, select: { userTokenEnc: true } });
-  let userToken: string;
-  try {
-    if (!approver?.userTokenEnc) throw new TokenCryptoError("no Slack token stored for you");
-    userToken = decryptToken(approver.userTokenEnc);
-  } catch (err) {
-    const reason = `${err instanceof Error ? err.message : String(err)}; sign in again to post`;
-    await markFailed(draftId, workspaceId, reason);
-    return { outcome: "failed", reason };
+  //    Exception (decision #21): NEXT_STEPS is posted by the Momentum bot, so no personal token is needed.
+  let userToken: string | undefined;
+  if (draft.type !== "NEXT_STEPS") {
+    const approver = await prisma.slackUser.findFirst({ where: { id: actorId, workspaceId }, select: { userTokenEnc: true } });
+    try {
+      if (!approver?.userTokenEnc) throw new TokenCryptoError("no Slack token stored for you");
+      userToken = decryptToken(approver.userTokenEnc);
+    } catch (err) {
+      const reason = `${err instanceof Error ? err.message : String(err)}; sign in again to post`;
+      await markFailed(draftId, workspaceId, reason);
+      return { outcome: "failed", reason };
+    }
   }
 
   // 4. The side effect. Re-read the text: claim happened after our edit, so this is the approved text.

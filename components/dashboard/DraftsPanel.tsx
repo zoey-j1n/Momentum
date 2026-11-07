@@ -4,11 +4,11 @@
 // State lives in the database; this component only holds the text being edited and the last result.
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { approveAndSend, rejectDraftAction, restoreDraftAction, saveDraftText, type ActionResult } from "@/app/dashboard/actions";
+import { approveAndSend, createNotionPageAction, rejectDraftAction, restoreDraftAction, saveDraftText, type ActionResult } from "@/app/dashboard/actions";
 
 export type DraftView = {
   id: string;
-  type: "REPLY" | "SUMMARY" | "MEETING" | "INVITE";
+  type: "REPLY" | "SUMMARY" | "MEETING" | "INVITE" | "NEXT_STEPS";
   text: string;
   reason: string | null;
   status: "SUGGESTED" | "APPROVED" | "REJECTED" | "POSTING" | "POSTED" | "FAILED";
@@ -16,6 +16,7 @@ export type DraftView = {
   postedAt: string | null;
   permalink: string | null;
   notionPageUrl: string | null;
+  notionState: "pending" | "failed" | null;
   notionError: string | null;
 };
 
@@ -24,9 +25,10 @@ const TABS: { type: DraftView["type"]; label: string; hint: string; rows: number
   { type: "SUMMARY", label: "Recap", hint: "Recap of what was discussed and concluded, for the thread or an email", rows: 9 },
   { type: "MEETING", label: "Meeting", hint: "Propose a sync", rows: 4 },
   { type: "INVITE", label: "Invite", hint: "Invite text: paste into the thread, an email, or a calendar event", rows: 6 },
+  { type: "NEXT_STEPS", label: "Next steps", hint: "Built from the action items above. Momentum posts it and tags every owner shown there; change an owner before approving if it is wrong", rows: 7 },
 ];
 
-export function DraftsPanel({ drafts, channel }: { drafts: DraftView[]; channel: string }) {
+export function DraftsPanel({ drafts, channel, notionEnabled }: { drafts: DraftView[]; channel: string; notionEnabled: boolean }) {
   const router = useRouter();
   const tabs = TABS.filter((t) => drafts.some((d) => d.type === t.type)); // only suggested kinds get a tab
   const [tab, setTab] = useState<DraftView["type"]>(tabs[0]?.type ?? "REPLY");
@@ -84,8 +86,19 @@ export function DraftsPanel({ drafts, channel }: { drafts: DraftView[]; channel:
             rows={meta.rows}
             value={edits[draft.id] ?? draft.text}
             onChange={(e) => setEdits({ ...edits, [draft.id]: e.target.value })}
-            disabled={draft.status !== "SUGGESTED" || pending}
+            disabled={draft.status !== "SUGGESTED" || pending || draft.type === "NEXT_STEPS"}
           />
+          {draft.type === "NEXT_STEPS" && draft.status === "SUGGESTED" ? <p className="meta-13">Edit the action items above to change this text: owner, Include, Done.</p> : null}
+          {draft.type === "INVITE" && notionEnabled && !draft.notionPageUrl && draft.status === "SUGGESTED" ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button type="button" className="btn btn-sm" disabled={pending || draft.notionState === "pending"} onClick={() => run(() => createNotionPageAction(draft.id))}>
+                {draft.notionState === "pending" ? "Creating Notion page…" : "Create Notion page"}
+              </button>
+              <span className="meta">Adds the page link to this invite before it is posted.</span>
+            </div>
+          ) : null}
+          {draft.notionPageUrl && draft.status !== "POSTED" ? <p className="meta-13">Notion page: <a href={draft.notionPageUrl} target="_blank" rel="noreferrer">open</a></p> : null}
+          {draft.notionState === "failed" && draft.status !== "POSTED" ? <div className="error-line">Notion export failed: {draft.notionError}. Try again.</div> : null}
           <StatusLine draft={draft} />
           {result && !result.ok ? <div className="error-line">{result.error}</div> : null}
           {result && result.ok && result.message ? <div className="meta-13" style={{ color: "var(--ok-text)" }}>{result.message}</div> : null}
@@ -95,7 +108,7 @@ export function DraftsPanel({ drafts, channel }: { drafts: DraftView[]; channel:
               {draft.status === "SUGGESTED" ? (
                 <>
                   <button type="button" className="btn btn-lg" disabled={pending} onClick={() => run(() => rejectDraftAction(draft.id))}>Reject</button>
-                  {edits[draft.id] !== undefined && edits[draft.id] !== draft.text ? (
+                  {draft.type !== "NEXT_STEPS" && edits[draft.id] !== undefined && edits[draft.id] !== draft.text ? (
                     <button type="button" className="btn btn-lg" disabled={pending} onClick={() => run(() => saveDraftText(draft.id, edits[draft.id]))}>Save edit</button>
                   ) : null}
                   <button type="button" className="btn btn-lg btn-primary" disabled={pending} onClick={() => run(() => approveAndSend(draft.id, edits[draft.id] ?? draft.text))}>
@@ -133,7 +146,7 @@ function StatusLine({ draft }: { draft: DraftView }) {
       <p className="meta-13" style={{ color: "var(--ok-text)" }}>
         Posted{draft.postedAt ? ` ${new Date(draft.postedAt).toLocaleString()}` : ""}
         {draft.permalink ? <> · <a href={draft.permalink} target="_blank" rel="noreferrer">Open in Slack</a></> : null}
-        {draft.type === "INVITE" ? (draft.notionPageUrl ? <> · <a href={draft.notionPageUrl} target="_blank" rel="noreferrer">Notion page</a></> : draft.notionError ? <> · <span style={{ color: "var(--warn-text)" }}>Notion export failed: {draft.notionError}</span></> : <> · Notion page: creating…</>) : null}
+        {draft.type === "INVITE" ? (draft.notionPageUrl ? <> · <a href={draft.notionPageUrl} target="_blank" rel="noreferrer">Notion page</a></> : draft.notionState === "failed" ? <> · <span style={{ color: "var(--warn-text)" }}>Notion export failed: {draft.notionError}</span></> : draft.notionState === "pending" ? <> · Notion page: creating…</> : null) : null}
         . Final: posted messages are not edited from here.
       </p>
     );

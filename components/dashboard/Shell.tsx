@@ -9,12 +9,9 @@ type Props = {
   children: React.ReactNode;
 };
 
+// One page for now
 const NAV = [
-  { key: "overview", label: "Overview", href: "/dashboard/overview", soon: true },
   { key: "threads", label: "Thread reviews", href: "/dashboard", count: "threads" },
-  { key: "drafts", label: "Drafts", href: "/dashboard/drafts", count: "drafts", soon: true },
-  { key: "items", label: "Action items", href: "/dashboard/items", count: "items", soon: true },
-  { key: "channels", label: "Channels", href: "/dashboard/channels", soon: true },
 ] as const;
 
 const ICONS: Record<string, string> = {

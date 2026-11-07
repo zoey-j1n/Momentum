@@ -80,11 +80,14 @@ export async function markPosted(draftId: string, workspaceId: string, slackMess
     await tx.auditEvent.create({
       data: { workspaceId, actorId: null, entityType: "Draft", entityId: draftId, action: "posted", fromStatus: "POSTING", toStatus: "POSTED" },
     });
-    // Decision #18: a posted invite gets a Notion meeting page. The job row commits with the status change,
-    // so "POSTED invite with no export job" cannot exist. The worker does the Notion call, never this code.
-    if (notionConfigured()) {
-      const d = await tx.draft.findUniqueOrThrow({ where: { id: draftId }, select: { type: true } });
-      if (d.type === "INVITE") await enqueue("notion_export", { draftId }, { db: tx });
+    const d = await tx.draft.findUniqueOrThrow({ where: { id: draftId }, select: { type: true, analysisId: true, notionPageUrl: true } });
+    // Decision #18: a posted invite gets a Notion meeting page, unless one was already created from the
+    // dashboard before posting. The job row commits with the status change, so "POSTED invite with no
+    // export job" cannot exist. The worker does the Notion call, never this code.
+    if (notionConfigured() && d.type === "INVITE" && !d.notionPageUrl) await enqueue("notion_export", { draftId }, { db: tx });
+    // Decision #21: the items this Next steps post announced are marked, so the next post lists only what is new.
+    if (d.type === "NEXT_STEPS") {
+      await tx.actionItem.updateMany({ where: { analysisId: d.analysisId, include: true, done: false, announcedInDraftId: null }, data: { announcedInDraftId: draftId } });
     }
   });
 }

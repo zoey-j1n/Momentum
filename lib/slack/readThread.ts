@@ -5,6 +5,7 @@ import { mentionedUserIds, type SlackMessage } from "../analysis/transcript";
 import type { WebClient } from "@slack/web-api";
 import { NON_RETRYABLE_SLACK_ERRORS, slackClient, slackErrorCode } from "./client";
 import { NonRetryableError } from "../jobs/errors";
+import { resolveUserNames, type UserName } from "./userCache";
 
 export type ThreadRef = { channelId: string; threadTs: string };
 
@@ -111,8 +112,8 @@ export class SlackWebReader implements SlackReader {
     const messages = afterTs === null ? raw : raw.filter((m) => m.ts > afterTs);
 
     // Names for everyone who spoke AND everyone who was @-mentioned, so a silent mentioned person is a
-    // real participant with a real name, not "unknown (U...)".
-    const users = await this.lookupUsers(slack, [...new Set([...messages.map((m) => m.user), ...mentionedUserIds(messages)])]);
+    // real participant with a real name, not "unknown (U...)". Cached in SlackUser for a day (lib/slack/userCache.ts).
+    const users = await resolveUserNames(slack, [...messages.map((m) => m.user), ...mentionedUserIds(messages)]);
     return { messages, users };
   }
 
@@ -131,24 +132,8 @@ export class SlackWebReader implements SlackReader {
       console.warn(`[slack] conversations.members failed for ${channelId}: ${slackErrorCode(err) ?? String(err)}`);
       return new Map();
     }
-    return this.lookupUsers(slack, ids);
-  }
-
-  private async lookupUsers(slack: WebClient, ids: string[]) {
-    const users = new Map<string, { displayName: string; realName?: string }>();
-    for (const id of ids) {
-      try {
-        const { user } = await slack.users.info({ user: id });
-        if (user?.is_bot || user?.deleted) continue; // bots and deactivated accounts are not owners
-        const p = user?.profile;
-        users.set(id, {
-          displayName: p?.display_name_normalized || p?.display_name || user?.real_name || id,
-          realName: user?.real_name ?? undefined,
-        });
-      } catch {
-        users.set(id, { displayName: id }); // unknown user: keep the ID, never block the analysis
-      }
-    }
-    return users;
+    // Names from our own table when fresh, one users.list when many are unknown, users.info only for stragglers.
+    const named: Map<string, UserName> = await resolveUserNames(slack, ids);
+    return named;
   }
 }

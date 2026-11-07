@@ -6,6 +6,12 @@ import { revalidatePath } from "next/cache";
 import { approveDraft, editDraft, rejectDraft, restoreDraft, TransitionError } from "@/lib/drafts/transitions";
 import { sendDraft } from "@/lib/drafts/sendDraft";
 import { setAssignee } from "@/lib/actionItems/setAssignee";
+import { setItemFlags, type ItemFlags } from "@/lib/actionItems/setFlags";
+import { refreshNextStepsForItem } from "@/lib/drafts/nextSteps";
+import { deleteMyCatchUps, DeleteError } from "@/lib/dashboard/deleteCatchUps";
+import { enqueue } from "@/lib/jobs/queue";
+import { notionConfigured } from "@/lib/notion";
+import { prisma } from "@/lib/db";
 import { requireContext } from "@/lib/dashboard/workspace";
 import { AccessError, assertActionItemAccess, assertDraftAccess } from "@/lib/dashboard/access";
 import { AuthError } from "@/lib/auth/session";
@@ -25,6 +31,7 @@ async function context(draftId: string) {
 function report(err: unknown): ActionResult {
   if (err instanceof AuthError) return { ok: false, error: "Your session expired. Reload and sign in again." };
   if (err instanceof AccessError) return { ok: false, error: "This isn't on a thread you requested." };
+  if (err instanceof DeleteError) return { ok: false, error: err.message };
   if (err instanceof TransitionError) return { ok: false, error: "This draft changed under you. Reload to see its current state." };
   return { ok: false, error: err instanceof Error ? err.message : String(err) };
 }
@@ -84,6 +91,7 @@ export async function setAssigneeAction(actionItemId: string, assigneeId: string
     const ctx = await requireContext();
     await assertActionItemAccess(actionItemId, { workspaceId: ctx.workspaceId, userId: ctx.user.id });
     await setAssignee(actionItemId, ctx.workspaceId, ctx.user.id, assigneeId);
+    await refreshNextStepsForItem(actionItemId); // the Next steps draft mirrors the items (decision #21)
     revalidatePath("/dashboard");
     return { ok: true };
   } catch (e) {
@@ -98,6 +106,49 @@ export async function approveOnly(draftId: string): Promise<ActionResult> {
     await approveDraft(draftId, workspaceId, actorId);
     revalidatePath("/dashboard");
     return { ok: true };
+  } catch (e) {
+    return report(e);
+  }
+}
+
+/** Include-in-next-steps / done toggles on an action item (decision #21). */
+export async function setItemFlagsAction(actionItemId: string, flags: ItemFlags): Promise<ActionResult> {
+  try {
+    const ctx = await requireContext();
+    await assertActionItemAccess(actionItemId, { workspaceId: ctx.workspaceId, userId: ctx.user.id });
+    await setItemFlags(actionItemId, ctx.workspaceId, ctx.user.id, flags);
+    await refreshNextStepsForItem(actionItemId);
+    revalidatePath("/dashboard");
+    return { ok: true };
+  } catch (e) {
+    return report(e);
+  }
+}
+
+/** "Create Notion page" on an invite that is still a draft (decision #18, amended): queue the export now. */
+export async function createNotionPageAction(draftId: string): Promise<ActionResult> {
+  try {
+    if (!notionConfigured()) return { ok: false, error: "Notion is not configured (NOTION_API_KEY, NOTION_DATABASE_ID)." };
+    const { workspaceId } = await context(draftId);
+    const d = await prisma.draft.findFirst({ where: { id: draftId, analysis: { thread: { workspaceId } } }, select: { type: true, notionPageUrl: true } });
+    if (!d || d.type !== "INVITE") return { ok: false, error: "Only invites get a Notion page." };
+    if (d.notionPageUrl) return { ok: true, message: "Notion page already exists" };
+    const pending = await prisma.job.count({ where: { type: "notion_export", status: { in: ["QUEUED", "RUNNING"] }, payload: { equals: { draftId } } } });
+    if (pending === 0) await enqueue("notion_export", { draftId });
+    revalidatePath("/dashboard");
+    return { ok: true, message: "Creating the Notion page…" };
+  } catch (e) {
+    return report(e);
+  }
+}
+
+/** "Remove my catch-ups": delete the signed-in person's analyses of a thread (decision #19 scope). */
+export async function removeMyCatchUpsAction(threadId: string): Promise<ActionResult> {
+  try {
+    const ctx = await requireContext();
+    const { analyses } = await deleteMyCatchUps(threadId, { workspaceId: ctx.workspaceId, userId: ctx.user.id });
+    revalidatePath("/dashboard");
+    return { ok: true, message: `Removed ${analyses} catch-up${analyses === 1 ? "" : "s"}` };
   } catch (e) {
     return report(e);
   }

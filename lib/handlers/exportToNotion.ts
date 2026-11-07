@@ -1,4 +1,7 @@
-// Job "notion_export": after an INVITE draft is posted, create its meeting page in Notion (decision #18).
+// Job "notion_export": create the Notion meeting page for an INVITE draft (decision #18, amended 2026-11-07).
+// Two triggers: the "Create Notion page" button while the invite is still a draft (v1's behaviour: the page
+// link is appended to the draft text so it goes out with the message), and automatically after an invite
+// is posted without one.
 //
 // Idempotent in two layers. Before creating, look for a page with the same title (a retry after a crash
 // between "page created" and "URL recorded" reuses it). After creating, record the URL with a conditional
@@ -17,7 +20,7 @@ export async function exportInviteToNotion(draftId: string, notion: NotionClient
     select: { type: true, status: true, text: true, notionPageUrl: true, analysis: { select: { summary: true, requestedBy: { select: { displayName: true } } } } },
   });
   if (!draft) throw new NonRetryableError(`draft ${draftId} not found`);
-  if (draft.type !== "INVITE" || draft.status !== "POSTED") throw new NonRetryableError(`draft ${draftId} is ${draft.type}/${draft.status}, not a posted invite`);
+  if (draft.type !== "INVITE" || draft.status === "REJECTED") throw new NonRetryableError(`draft ${draftId} is ${draft.type}/${draft.status}, not an invite to export`);
   if (draft.notionPageUrl) return "skipped"; // already exported (a redelivered or retried job)
 
   const title = meetingTitle(draft.analysis.summary);
@@ -29,5 +32,7 @@ export async function exportInviteToNotion(draftId: string, notion: NotionClient
   }
 
   const { count } = await prisma.draft.updateMany({ where: { id: draftId, notionPageUrl: null }, data: { notionPageUrl: url } });
+  // Still a draft: put the link into the message, as v1 did. Approved or posted text is never edited.
+  if (count === 1) await prisma.draft.updateMany({ where: { id: draftId, status: "SUGGESTED" }, data: { text: `${draft.text}\n\nNotion page: ${url}` } });
   return count === 1 ? outcome : "skipped";
 }

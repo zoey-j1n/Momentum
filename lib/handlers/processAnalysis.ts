@@ -11,6 +11,7 @@
 import { prisma } from "../db";
 import { addParticipants, buildTranscript, type Participant } from "../analysis/transcript";
 import { verifyEvidence } from "../analysis/evidence";
+import { refreshNextStepsDraft } from "../drafts/nextSteps";
 import { SYSTEM_PROMPT, buildUserMessage } from "../analysis/prompt";
 import { requesterCursor } from "../analysis/cursor";
 import { AnalysisOutput } from "../analysis/schema";
@@ -245,6 +246,8 @@ export async function commitAnalysis(input: CommitInput): Promise<void> {
       ] as const
     ).flatMap(([type, s]) => (s ? [{ analysisId: input.analysisId, type, text: s.text, reason: s.reason }] : []));
     if (suggested.length > 0) await tx.draft.createMany({ data: suggested });
+    // 3b. The Next steps draft, built by code from the items just written (decision #21). Same transaction.
+    await refreshNextStepsDraft(input.analysisId, tx);
 
     // 4. The thread-level high-water mark, display only (the real cursor is per requester, derived from
     //    DONE analyses). Only ever moves forward.

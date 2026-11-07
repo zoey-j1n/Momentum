@@ -8,8 +8,11 @@ import { DraftsPanel, type DraftView } from "@/components/dashboard/DraftsPanel"
 import { ActionItemRow } from "@/components/dashboard/ActionItemRow";
 import { AutoRefresh } from "@/components/dashboard/AutoRefresh";
 import { LocalTime } from "@/components/dashboard/LocalTime";
+import { OpenInSlack } from "@/components/dashboard/OpenInSlack";
+import { RemoveCatchUps } from "@/components/dashboard/RemoveCatchUps";
+import { notionConfigured } from "@/lib/notion";
 import { currentContext } from "@/lib/dashboard/workspace";
-import { ago, failedNotionExports, listThreads, listWorkspaceUsers, matchesFilter, pickAnalysis, sidebarCounts, slackPermalink, threadTitle, type Filter } from "@/lib/dashboard/queries";
+import { ago, notionExportStates, listThreads, listWorkspaceUsers, matchesFilter, pickAnalysis, sidebarCounts, slackPermalink, threadTitle, type Filter } from "@/lib/dashboard/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -29,13 +32,13 @@ export default async function ThreadReviewsPage({ searchParams }: { searchParams
 
   const filter: Filter = (FILTERS.find((f) => f.key === params.filter)?.key ?? "all");
   const viewer = { workspaceId: ctx.workspaceId, userId: ctx.user.id };
-  const [threads, users, counts, notionFailures] = await Promise.all([listThreads(viewer), listWorkspaceUsers(ws.id), sidebarCounts(viewer), failedNotionExports()]);
+  const [threads, users, counts, notionStates] = await Promise.all([listThreads(viewer), listWorkspaceUsers(ws.id), sidebarCounts(viewer), notionExportStates()]);
   const visible = threads.filter((t) => matchesFilter(t, filter));
   const selected = visible.find((t) => t.id === params.thread) ?? visible[0];
   const analysis = selected ? pickAnalysis(selected) : undefined;
   const me = ctx.user.displayName;
   // Something is still moving: an analysis in progress, a draft being posted, or a Notion page being made.
-  const inFlight = threads.some((t) => t.analyses.some((a) => a.status === "PENDING" || a.status === "RUNNING") || t.analyses[0]?.drafts.some((d) => d.status === "POSTING" || (d.status === "POSTED" && d.type === "INVITE" && !d.notionPageUrl && !notionFailures.has(d.id))));
+  const inFlight = threads.some((t) => t.analyses.some((a) => a.status === "PENDING" || a.status === "RUNNING") || t.analyses[0]?.drafts.some((d) => d.status === "POSTING" || notionStates.get(d.id)?.state === "pending"));
 
   return (
     <Shell active="threads" counts={counts} user={{ name: me, workspace: ws.name }}>
@@ -93,7 +96,8 @@ export default async function ThreadReviewsPage({ searchParams }: { searchParams
                   </span>
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <a className="btn" href={slackPermalink(selected.channelId, selected.threadTs)} target="_blank" rel="noreferrer">Open in Slack</a>
+                  <RemoveCatchUps threadId={selected.id} />
+                  <OpenInSlack teamId={ws.slackTeamId} channelId={selected.channelId} ts={selected.threadTs} webUrl={slackPermalink(selected.channelId, selected.threadTs)} />
                 </div>
               </div>
 
@@ -128,13 +132,13 @@ export default async function ThreadReviewsPage({ searchParams }: { searchParams
                   </div>
                   {/* "On you" (USER_FLOWS §3): the answer to "do I need to do anything?", pulled out of the full list. */}
                   <div className="divider-t" style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 18 }}>
-                    <h3 className="label" style={{ marginBottom: 6 }}>On you · {analysis.actionItems.filter((i) => i.assigneeId === ctx.user.id).length}</h3>
-                    {analysis.actionItems.filter((i) => i.assigneeId === ctx.user.id).length === 0 ? <p className="meta-13">Nothing on you in this thread.</p> : null}
-                    {analysis.actionItems.filter((i) => i.assigneeId === ctx.user.id).map((i) => (
+                    <h3 className="label" style={{ marginBottom: 6 }}>On you · {analysis.actionItems.filter((i) => i.assigneeId === ctx.user.id && !i.done).length}</h3>
+                    {analysis.actionItems.filter((i) => i.assigneeId === ctx.user.id && !i.done).length === 0 ? <p className="meta-13">Nothing on you in this thread.</p> : null}
+                    {analysis.actionItems.filter((i) => i.assigneeId === ctx.user.id && !i.done).map((i) => (
                       <ActionItemRow
                         key={`mine-${i.id}`}
                         users={users}
-                        item={{ id: i.id, task: i.task, assigneeId: i.assigneeId, assigneeName: i.assigneeName, assignmentSource: i.assignmentSource, assigneeConfirmed: i.assigneeConfirmed }}
+                        item={{ id: i.id, task: i.task, assigneeId: i.assigneeId, assigneeName: i.assigneeName, assignmentSource: i.assignmentSource, assigneeConfirmed: i.assigneeConfirmed, include: i.include, done: i.done, announced: i.announcedInDraftId !== null }}
                       />
                     ))}
                   </div>
@@ -145,7 +149,7 @@ export default async function ThreadReviewsPage({ searchParams }: { searchParams
                       <ActionItemRow
                         key={i.id}
                         users={users}
-                        item={{ id: i.id, task: i.task, assigneeId: i.assigneeId, assigneeName: i.assigneeName, assignmentSource: i.assignmentSource, assigneeConfirmed: i.assigneeConfirmed }}
+                        item={{ id: i.id, task: i.task, assigneeId: i.assigneeId, assigneeName: i.assigneeName, assignmentSource: i.assignmentSource, assigneeConfirmed: i.assigneeConfirmed, include: i.include, done: i.done, announced: i.announcedInDraftId !== null }}
                       />
                     ))}
                   </div>
@@ -155,13 +159,15 @@ export default async function ThreadReviewsPage({ searchParams }: { searchParams
 
             {analysis?.status === "DONE" ? (
               <DraftsPanel
+                notionEnabled={notionConfigured()}
                 channel={selected.channelName ?? selected.channelId}
                 drafts={analysis.drafts.map((d): DraftView => ({
                   id: d.id, type: d.type, text: d.text, reason: d.reason, status: d.status, lastError: d.lastError,
                   postedAt: d.postedAt?.toISOString() ?? null,
                   permalink: d.slackMessageTs ? slackPermalink(selected.channelId, d.slackMessageTs) : null,
                   notionPageUrl: d.notionPageUrl,
-                  notionError: notionFailures.get(d.id) ?? null,
+                  notionState: notionStates.get(d.id)?.state ?? null,
+                  notionError: notionStates.get(d.id)?.error ?? null,
                 }))}
               />
             ) : null}

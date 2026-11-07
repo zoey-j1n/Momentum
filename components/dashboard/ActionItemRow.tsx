@@ -2,7 +2,7 @@
 // One action item: avatar, task, Owner select, Confirm. Calls setAssigneeAction (Zoey writes setAssignee).
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { setAssigneeAction, type ActionResult } from "@/app/dashboard/actions";
+import { setAssigneeAction, setItemFlagsAction, type ActionResult } from "@/app/dashboard/actions";
 import { isUnassignedOwner, ownerCandidates } from "@/lib/analysis/matchAssignees";
 
 export type ItemView = {
@@ -12,6 +12,9 @@ export type ItemView = {
   assigneeName: string; // what the model said, verbatim
   assignmentSource: "THREAD_ID" | "THREAD_NAME" | "NAME_MATCH" | "MANUAL" | "NONE";
   assigneeConfirmed: boolean;
+  include: boolean; // goes into the Next steps post
+  done: boolean;
+  announced: boolean; // already posted in a Next steps message
 };
 export type UserOption = { id: string; displayName: string };
 
@@ -48,12 +51,26 @@ export function ActionItemRow({ item, users }: { item: ItemView; users: UserOpti
       if (r.ok) router.refresh();
     });
   }
+  function flag(flags: { include?: boolean; done?: boolean }) {
+    setResult(null);
+    start(async () => {
+      const r = await setItemFlagsAction(item.id, flags);
+      setResult(r);
+      if (r.ok) router.refresh();
+    });
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0" }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
         <span className="avatar">{item.assigneeId ? initials : "?"}</span>
-        <span style={{ flex: "1 1 240px", fontSize: 14 }}>{item.task}</span>
+        <span style={{ flex: "1 1 240px", fontSize: 14, textDecoration: item.done ? "line-through" : undefined, color: item.done ? "var(--text-3)" : undefined }}>{item.task}{item.announced ? <span className="meta" style={{ marginLeft: 8 }}>announced</span> : null}</span>
+        <label className="meta" style={{ display: "flex", alignItems: "center", gap: 4 }} title="Include in the Next steps post">
+          <input type="checkbox" checked={item.include} disabled={pending || item.announced} onChange={(e) => flag({ include: e.target.checked })} /> Include
+        </label>
+        <label className="meta" style={{ display: "flex", alignItems: "center", gap: 4 }} title="Mark done">
+          <input type="checkbox" checked={item.done} disabled={pending} onChange={(e) => flag({ done: e.target.checked })} /> Done
+        </label>
         <label style={{ display: "flex", alignItems: "center", gap: 6 }} className="meta">
           Owner
           <select className={`select ${!value ? "select-warn" : ""}`} value={value} onChange={(e) => setValue(e.target.value)} disabled={pending}>
