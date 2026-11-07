@@ -7,6 +7,7 @@
 import type { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../db";
 import { isUnassignedOwner } from "../analysis/matchAssignees";
+import { normalizeForMatch } from "../analysis/evidence";
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -39,10 +40,18 @@ export function buildNextStepsText(items: NextStepsItem[]): string | null {
  * left SUGGESTED: an approved or posted text is final.
  */
 export async function refreshNextStepsDraft(analysisId: string, db: Db = prisma): Promise<void> {
-  const items = await db.actionItem.findMany({
+  const own = await db.actionItem.findMany({
     where: { analysisId, announcedInDraftId: null },
     select: { task: true, include: true, done: true, assigneeConfirmed: true, assigneeName: true, assignee: { select: { slackUserId: true, displayName: true } } },
   });
+  // Items are per person (decision #19), so "already announced" has to be read across the whole thread:
+  // if anyone's Next steps post carried this task, nobody else's should repeat it (Zoey, 2026-11-07).
+  // Matched on normalized task text, the same way owners are carried over (decision #17). Decision #20
+  // replaces this with one item list per thread.
+  const a = await db.analysis.findUnique({ where: { id: analysisId }, select: { threadId: true } });
+  const announced = a ? await db.actionItem.findMany({ where: { analysis: { threadId: a.threadId }, announcedInDraftId: { not: null } }, select: { task: true } }) : [];
+  const announcedTasks = new Set(announced.map((i) => normalizeForMatch(i.task)));
+  const items = own.filter((i) => !announcedTasks.has(normalizeForMatch(i.task)));
   const text = buildNextStepsText(items);
   const existing = await db.draft.findUnique({ where: { analysisId_type: { analysisId, type: "NEXT_STEPS" } }, select: { id: true, status: true } });
   if (!existing) {
@@ -58,4 +67,10 @@ export async function refreshNextStepsDraft(analysisId: string, db: Db = prisma)
 export async function refreshNextStepsForItem(actionItemId: string): Promise<void> {
   const item = await prisma.actionItem.findUnique({ where: { id: actionItemId }, select: { analysisId: true } });
   if (item) await refreshNextStepsDraft(item.analysisId);
+}
+
+/** After a Next steps post: other people's still-SUGGESTED drafts on the same thread lose the announced items. */
+export async function refreshOtherNextSteps(threadId: string, exceptAnalysisId: string, db: Db = prisma): Promise<void> {
+  const others = await db.draft.findMany({ where: { type: "NEXT_STEPS", status: "SUGGESTED", analysis: { threadId, id: { not: exceptAnalysisId } } }, select: { analysisId: true } });
+  for (const o of others) await refreshNextStepsDraft(o.analysisId, db);
 }

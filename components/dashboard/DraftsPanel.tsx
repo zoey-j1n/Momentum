@@ -89,12 +89,12 @@ export function DraftsPanel({ drafts, channel, notionEnabled }: { drafts: DraftV
             disabled={draft.status !== "SUGGESTED" || pending || draft.type === "NEXT_STEPS"}
           />
           {draft.type === "NEXT_STEPS" && draft.status === "SUGGESTED" ? <p className="meta-13">Edit the action items above to change this text: owner, Include, Done.</p> : null}
-          {draft.type === "INVITE" && notionEnabled && !draft.notionPageUrl && draft.status === "SUGGESTED" ? (
+          {draft.type === "INVITE" && !draft.notionPageUrl && draft.status === "SUGGESTED" ? (
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <button type="button" className="btn btn-sm" disabled={pending || draft.notionState === "pending"} onClick={() => run(() => createNotionPageAction(draft.id))}>
+              <button type="button" className="btn btn-sm" disabled={pending || !notionEnabled || draft.notionState === "pending"} onClick={() => run(() => createNotionPageAction(draft.id))}>
                 {draft.notionState === "pending" ? "Creating Notion page…" : "Create Notion page"}
               </button>
-              <span className="meta">Adds the page link to this invite before it is posted.</span>
+              <span className="meta">{notionEnabled ? "Adds the page link to this invite before it is posted." : "Notion is not configured on this deployment (NOTION_API_KEY, NOTION_DATABASE_ID)."}</span>
             </div>
           ) : null}
           {draft.notionPageUrl && draft.status !== "POSTED" ? <p className="meta-13">Notion page: <a href={draft.notionPageUrl} target="_blank" rel="noreferrer">open</a></p> : null}

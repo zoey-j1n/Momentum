@@ -2,6 +2,7 @@
 // The ONLY module that changes Draft.status. Every transition: conditional updateMany + audit event, one transaction.
 import { prisma } from "../db";
 import { enqueue } from "../jobs/queue";
+import { refreshOtherNextSteps } from "./nextSteps";
 import { notionConfigured } from "../notion";
 
 export class TransitionError extends Error {
@@ -88,6 +89,9 @@ export async function markPosted(draftId: string, workspaceId: string, slackMess
     // Decision #21: the items this Next steps post announced are marked, so the next post lists only what is new.
     if (d.type === "NEXT_STEPS") {
       await tx.actionItem.updateMany({ where: { analysisId: d.analysisId, include: true, done: false, announcedInDraftId: null }, data: { announcedInDraftId: draftId } });
+      // Other people's pending Next steps on this thread drop what this post just announced.
+      const a = await tx.analysis.findUniqueOrThrow({ where: { id: d.analysisId }, select: { threadId: true } });
+      await refreshOtherNextSteps(a.threadId, d.analysisId, tx);
     }
   });
 }
