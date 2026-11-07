@@ -52,16 +52,19 @@ export async function processAnalysis(analysisId: string, slack: SlackReader): P
   // an error on, and the catch needs `analysis.attempts`.
   try {
     // ---- Step 2: fetch the thread ---------------------------------------------------------------------
-    // Only messages after THIS requester's cursor (decision #19). Null means they never caught up: whole thread.
+    // The WHOLE thread, every run (decision #17 amended 2026-11-06, USER_FLOWS §6.3): the model needs the
+    // full context to find owners and quote evidence, and a weak earlier run must not poison later ones.
+    // The requester's cursor (decision #19) still decides whether anything is new and which messages are.
     const cursor = await requesterCursor(analysis.threadId, analysis.requestedById);
     const { messages, users } = await slack.readThread(
       { channelId: analysis.thread.channelId, threadTs: analysis.thread.threadTs },
-      cursor,
+      null,
     );
+    const newMessages = cursor === null ? messages.length : messages.filter((m) => m.ts > cursor).length;
 
-    // Edge case: nothing new since the cursor. Retrying cannot change that, so fail for good with a
-    // clear reason. Milestone 5's ingress will catch this earlier by comparing timestamps; this is the net.
-    if (messages.length === 0) {
+    // Edge case: nothing new since the cursor (or an empty thread). Retrying cannot change that, so fail
+    // for good with a clear reason. The ingress catches this earlier by comparing timestamps; this is the net.
+    if (messages.length === 0 || newMessages === 0) {
       throw new NonRetryableError("no new messages since the last analysis");
     }
 
@@ -104,7 +107,7 @@ export async function processAnalysis(analysisId: string, slack: SlackReader): P
     const channelPeople: Participant[] = [...members].map(([slackUserId, u]) => ({ slackUserId, displayName: u.displayName, role: "channel" as const }));
     const transcript = { ...built, participants: addParticipants(addParticipants(built.participants, [{ ...requester, role: "requester" as const }]), channelPeople) };
     const prior = cursor ? await loadPrior(analysis.threadId, analysis.requestedById, analysisId) : undefined;
-    const userMessage = buildUserMessage(transcript, prior, requester);
+    const userMessage = buildUserMessage(transcript, prior, requester, prior ? { newMessages } : undefined);
 
     let result: ModelCall<AnalysisOutput>;
     try {

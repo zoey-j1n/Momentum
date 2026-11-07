@@ -6,7 +6,7 @@ import type { z } from "zod";
 
 export const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-haiku-5-5";
 const EFFORT = (process.env.ANALYSIS_EFFORT ?? "medium") as "low" | "medium" | "high";
-const MAX_TOKENS = Number(process.env.ANALYSIS_MAX_TOKENS ?? 4096);
+const MAX_TOKENS = Number(process.env.ANALYSIS_MAX_TOKENS ?? 16_384);
 
 // USD per million tokens. Update when pricing changes; the eval in Milestone 8 reads costUsd from Analysis rows.
 const PRICE_PER_MTOK: Record<string, { input: number; output: number }> = {
@@ -45,13 +45,24 @@ export type ModelCall<T> = {
 export async function callClaude<T>(args: { system: string; user: string; schema: z.ZodType<T> }): Promise<ModelCall<T>> {
   const started = Date.now();
 
-  const response = await client.messages.parse({
-    model: MODEL,
-    max_tokens: MAX_TOKENS,
-    system: args.system,
-    messages: [{ role: "user", content: args.user }],
-    output_config: { format: zodOutputFormat(args.schema), effort: EFFORT },
-  });
+  const request = () => client.messages.parse({
+      model: MODEL,
+      max_tokens: MAX_TOKENS,
+      system: args.system,
+      messages: [{ role: "user", content: args.user }],
+      output_config: { format: zodOutputFormat(args.schema), effort: EFFORT },
+    });
+  let response: Awaited<ReturnType<typeof request>>;
+  try {
+    response = await request();
+  } catch (err) {
+    // The SDK throws before we can look at stop_reason when the JSON is truncated (max_tokens) or malformed.
+    // Treat it like a cutoff: not retryable at the same cap, and the analysis records the reason.
+    if (err instanceof Error && /parse structured output/i.test(err.message)) {
+      throw new ModelOutputError(`output could not be parsed, probably cut off at ${MAX_TOKENS} tokens: ${err.message.slice(0, 120)}`, false);
+    }
+    throw err;
+  }
 
   const latencyMs = Date.now() - started;
 
