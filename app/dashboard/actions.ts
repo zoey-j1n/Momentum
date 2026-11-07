@@ -3,6 +3,8 @@
 // (decision #9), call the one module allowed to change state, report back. Errors are returned, not
 // thrown, so the UI can show them next to the button instead of a blank error page.
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
+import { kickRunner } from "@/lib/jobs/kick";
 import { approveDraft, editDraft, rejectDraft, restoreDraft, TransitionError } from "@/lib/drafts/transitions";
 import { sendDraft } from "@/lib/drafts/sendDraft";
 import { setAssignee } from "@/lib/actionItems/setAssignee";
@@ -135,6 +137,7 @@ export async function createNotionPageAction(draftId: string): Promise<ActionRes
     if (d.notionPageUrl) return { ok: true, message: "Notion page already exists" };
     const pending = await prisma.job.count({ where: { type: "notion_export", status: { in: ["QUEUED", "RUNNING"] }, payload: { equals: { draftId } } } });
     if (pending === 0) await enqueue("notion_export", { draftId });
+    after(() => kickRunner()); // production: wake the runner now instead of waiting for the cron tick
     revalidatePath("/dashboard");
     return { ok: true, message: "Creating the Notion page…" };
   } catch (e) {

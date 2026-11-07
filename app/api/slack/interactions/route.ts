@@ -2,6 +2,7 @@
 // Budget: 3,000 ms to return 200 or the user sees an error. The model takes ~9 s, so nothing slow
 // happens here; the work goes on the queue (decision #8) and the worker does it.
 import { after } from "next/server";
+import { kickRunner } from "@/lib/jobs/kick";
 import { verifySlackRequest } from "@/lib/slack/verify";
 import { ackText, catchUp, MessageActionPayload } from "@/lib/slack/ingress";
 
@@ -45,16 +46,9 @@ export async function POST(req: Request): Promise<Response> {
     });
     if (!res.ok) console.warn(`[slack ingress] ack failed: ${res.status} ${await res.text()}`);
   });
-  //    And wake the job runner so the analysis starts now, not at the next cron tick (decision #9). Only when
-  //    the runner secret is configured, i.e. in production; locally `npm run worker` is polling.
-  const runnerSecret = process.env.JOBS_RUN_SECRET;
-  if (result.kind === "queued" && runnerSecret) {
-    after(async () => {
-      const base = process.env.NEXT_PUBLIC_BASE_URL ?? new URL(req.url).origin;
-      const res = await fetch(`${base}/api/jobs/run`, { method: "POST", headers: { "x-jobs-secret": runnerSecret } }).catch((e) => e as Error);
-      if (res instanceof Error || !res.ok) console.warn(`[slack ingress] runner kick failed: ${res instanceof Error ? res.message : res.status}`);
-    });
-  }
+  //    And wake the job runner so the analysis starts now, not at the next cron tick (decision #9).
+  //    No-op locally, where `npm run worker` is polling.
+  if (result.kind === "queued") after(() => kickRunner(new URL(req.url).origin));
 
   // 6. Done-when: this number stays well under 3,000.
   console.log(`[slack ingress] ${result.kind} thread=${result.threadId} in ${Date.now() - started}ms`);
