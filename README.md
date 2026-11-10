@@ -1,101 +1,48 @@
-# Momentum: Your Slack Sidekick.
-Employees and students alike waste hours reading past Slack conversations and switching back and forth between Slack and Chrome to complete simple tasks like drafting emails or writing Notion documents. 
+# Momentum
 
-**Momentum** is a Slack-based AI assistant that turns Slack into a command center for getting work done. The system uses an AI agent to understand conversations between users and complete action items such as drafting emails, creating Notion documents and tasks, and generating conversation summaries. A web dashboard allows users to review, edit, and approve generated actions before they are finalized. By combining Slack, AI reasoning, and MCP-powered tools, Momentum helps users reduce context switching and complete everyday tasks more efficiently.
+Catch up on a Slack thread without reading it.
 
-### Video Demo:
-<p align="center">
-  <a href="https://youtu.be/uDYkBNjYKCs">
-    <img src="https://img.youtube.com/vi/uDYkBNjYKCs/maxresdefault.jpg" width="600">
-  </a>
-</p>
+Run the **Catch up with Momentum** message shortcut on any thread. About a minute later, your dashboard shows what was discussed, what was decided, which action items are yours, and drafted follow-ups. Nothing is posted to Slack until you approve it, and when it is, it posts under your own name.
 
-## Features
-- Slash command: `/momentum`
-- AI analysis of recent channel messages
-- Draft actions:
-	- reply
-	- summary
-	- meeting suggestion
-	- meeting invite
-	- Web dashboard for review, edit, approve, and post
-	- Notion page creation for meeting notes
+## How it works
 
-## Tech Stack
-- Next.js (App Router)
-- React + TypeScript
-- Slack Bolt (Socket Mode)
-- OpenAI API
-- Notion API
+1. You run the shortcut on a message in a thread. Slack sends the request to Momentum, which records it and replies right away.
+2. A background job reads the thread, asks Claude for a summary, action items, and draft follow-ups, and saves the result.
+3. You open the dashboard, edit a draft if you want, confirm who owns each action item, and click Approve & send.
+4. Momentum posts the approved message to the thread, exactly once.
 
-## Requirements
-- Node.js
-- npm
-- Slack app credentials
-- OpenAI API key
+## Tech stack
 
-## Environment Variables
-Create a `.env` file:
-```env
+- Next.js, React, TypeScript
+- Postgres with Prisma 7, including a job queue in a Postgres table
+- Claude via the Anthropic SDK (Haiku by default)
+- Slack Web API and Sign in with Slack
+- Notion API for meeting notes
+- Vercel, Neon, and cron-job.org in production
 
-SLACK_BOT_TOKEN=xoxb-...
+## Run it locally
 
-SLACK_APP_TOKEN=xapp-...
-
-OPENAI_API_KEY=sk-...
-```
-## Install
+You need Node 22, Docker, a Slack workspace you can install apps in, and an Anthropic API key.
 
 ```bash
-
-npm  install
-
+docker compose up -d        # Postgres
+cp .env.example .env        # fill in the values
+npm install
+npx prisma migrate deploy
+npm run dev                 # web app on http://localhost:3000
+npm run worker              # background jobs, in a second terminal
+npm run tunnel              # public URL so Slack can reach you
 ```
-## Run Locally
-Start both services in separate terminals:
 
-  
+Then create a Slack app from `slack/manifest.json`, point its URLs at your tunnel, install it, and copy the tokens into `.env`. The variables are explained in `.env.example`.
+
+To try it without Slack, set `SLACK_USE_FAKE_READER=1` and run `npx tsx scripts/enqueue-sample.ts`.
+
+## Commands
 
 ```bash
-
-npm  run  dev
-
+npm run dev          # web app
+npm run worker       # background jobs
+npm test             # tests
+npx prisma studio    # browse the database
 ```
-
-```bash
-
-npm  run  bolt
-
-```
-- App UI: `http://localhost:3000`
-
-- Dashboard: `http://localhost:3000/dashboard`
-
-  
-## Slack Setup
-1. Create a Slack app at `https://api.slack.com/apps`.
-
-2. Enable Socket Mode and create an app token with `connections:write`.
-
-3. Add bot token scopes:
-
--  `commands`
-
--  `chat:write`
-
--  `channels:history`
-
-4. Add a slash command named `/momentum`.
-
-5. Install the app to your workspace.
-
-
-## Usage
-
-1. In Slack, run `/momentum` in a channel.
-
-2. The bot analyzes recent messages and posts a card.
-
-3. Open the web app and go to the dashboard.
-
-4. Review drafts, edit if needed and approve!
