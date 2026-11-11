@@ -27,7 +27,17 @@ export type MessageActionPayload = z.infer<typeof MessageActionPayload>;
 export type CatchUpResult =
   | { kind: "queued"; analysisId: string; jobId: string; threadId: string }
   | { kind: "already_queued"; threadId: string } // an analysis is already PENDING or RUNNING for this thread
-  | { kind: "caught_up"; threadId: string }; // the clicked message is already covered by the last analysis
+  | { kind: "caught_up"; threadId: string } // the clicked message is already covered by the last analysis
+  | { kind: "rate_limited"; threadId: string; limit: number }; // this person already used their hourly allowance (DESIGN 4.9 layer 3)
+
+// Per-user rate limit (DESIGN 4.9, layer 3). A sliding-window count on the Analysis table: every row is a
+// model call that was intended, so DONE, FAILED, PENDING and RUNNING all count. Read at call time so a test
+// (or an operator) can change it without a restart. The index (requestedById, createdAt) exists for this query.
+export const PER_USER_HOURLY_LIMIT_DEFAULT = 10;
+export function perUserHourlyLimit(): number {
+  const n = Number(process.env.ANALYSES_PER_USER_PER_HOUR ?? PER_USER_HOURLY_LIMIT_DEFAULT);
+  return Number.isFinite(n) && n > 0 ? n : PER_USER_HOURLY_LIMIT_DEFAULT;
+}
 
 // Prisma's upsert is "select, then insert or update", not one atomic statement, so two requests arriving
 // together can both select nothing and both insert; the unique constraint rejects the loser with P2002.
@@ -77,6 +87,17 @@ export async function catchUp(p: MessageActionPayload): Promise<CatchUpResult> {
     }
   }
 
+  // Rate limit, after the cursor check (a "caught up" click costs nothing, so it is not counted) and before
+  // the insert (only clicks that would create an analysis are limited). This is a SOFT limit: two clicks
+  // arriving together at the boundary both count N-1 and both insert, so it can be off by the concurrency.
+  // That is fine for a cost guard; the hard stop is the spend limit on the Claude Console (layer 1).
+  // requester.id is a workspace-scoped SlackUser row, so this count is scoped by workspace through it.
+  const limit = perUserHourlyLimit();
+  const usedThisHour = await prisma.analysis.count({
+    where: { requestedById: requester.id, createdAt: { gte: new Date(Date.now() - 60 * 60_000) } },
+  });
+  if (usedThisHour >= limit) return { kind: "rate_limited", threadId: thread.id, limit };
+
   // The analysis row and its job commit together. Without the transaction, a crash between the two
   // inserts would leave a PENDING analysis that no worker will ever pick up, and the partial unique
   // index would then block every future click on this thread.
@@ -109,5 +130,7 @@ export function ackText(result: CatchUpResult, dashboardUrl: string): string {
       return `Already on it. This thread is being analyzed right now: ${dashboardUrl}`;
     case "caught_up":
       return `Nothing new since your last catch-up. Run it on a newer message to analyze what came after.`;
+    case "rate_limited":
+      return `You've used your ${result.limit} catch-ups for this hour. Try again a little later.`;
   }
 }

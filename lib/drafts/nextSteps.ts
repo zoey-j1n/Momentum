@@ -45,7 +45,7 @@ export async function refreshNextStepsDraft(analysisId: string, db: Db = prisma)
     select: { task: true, include: true, done: true, assigneeConfirmed: true, assigneeName: true, assignee: { select: { slackUserId: true, displayName: true } } },
   });
   // Items are per person (decision #19), so "already announced" has to be read across the whole thread:
-  // if anyone's Next steps post carried this task, nobody else's should repeat it (Zoey, 2026-11-07).
+  // if anyone's Next steps post carried this task, nobody else's should repeat it.
   // Matched on normalized task text, the same way owners are carried over (decision #17). Decision #20
   // replaces this with one item list per thread.
   const a = await db.analysis.findUnique({ where: { id: analysisId }, select: { threadId: true } });

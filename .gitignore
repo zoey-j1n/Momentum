@@ -16,3 +16,10 @@ docs/
 
 # Tests are kept locally only. They still run with `npm test`.
 tests/
+
+# Eval threads and results stay local, like docs/ and tests/
+evals/
+
+# Local eval/metrics scripts, like evals/
+scripts/eval.ts
+scripts/metrics.ts
