@@ -4,6 +4,7 @@
 // State lives in the database; this component only holds the text being edited and the last result.
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { LocalTime } from "./LocalTime";
 import { approveAndSend, createNotionPageAction, rejectDraftAction, restoreDraftAction, saveDraftText, type ActionResult } from "@/app/dashboard/actions";
 
 export type DraftView = {
@@ -144,7 +145,7 @@ function StatusLine({ draft }: { draft: DraftView }) {
     case "POSTING": return <p className="meta-13">Posting… If this stays for more than two minutes, the reconciler will settle it.</p>;
     case "POSTED": return (
       <p className="meta-13" style={{ color: "var(--ok-text)" }}>
-        Posted{draft.postedAt ? ` ${new Date(draft.postedAt).toLocaleString()}` : ""}
+        Posted{draft.postedAt ? <> <LocalTime iso={draft.postedAt} /></> : ""}
         {draft.permalink ? <> · <a href={draft.permalink} target="_blank" rel="noreferrer">Open in Slack</a></> : null}
         {draft.type === "INVITE" ? (draft.notionPageUrl ? <> · <a href={draft.notionPageUrl} target="_blank" rel="noreferrer">Notion page</a></> : draft.notionState === "failed" ? <> · <span style={{ color: "var(--warn-text)" }}>Notion export failed: {draft.notionError}</span></> : draft.notionState === "pending" ? <> · Notion page: creating…</> : null) : null}
         . Final: posted messages are not edited from here.
