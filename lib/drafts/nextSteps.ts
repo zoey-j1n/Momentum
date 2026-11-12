@@ -1,6 +1,10 @@
 // The Next steps post (decision #21, USER_FLOWS §4): the one draft whose text is built by code, not by the
-// model, from the action items. Editing the items IS editing the post. Every MATCHED owner becomes a real
-// <@mention>. An unmatched name is plain text; no owner says so.
+// model, from the action items. Editing the items IS editing the post. Every stored owner becomes a real
+// <@mention>, and a stored owner is one of two things: a reviewer's pick (assigneeConfirmed), or the matcher's
+// match, which is unambiguous by construction since 2026-11-11 (an ID whose first name another participant
+// shares, or a name more than one person has, is never stored; the reviewer picks). A name nobody matched is
+// plain text; no owner says so. Rule, in Zoey's words: "mention if it's confirmed, or if the model named them
+// and they're the only feasible option." A wrong ping is worse than no ping (decision #5).
 //
 // Lifecycle: created with the analysis (if there are open items), re-built whenever an item changes while
 // the draft is still SUGGESTED, frozen once approved (approval covers exact text), posted by the bot.
@@ -27,7 +31,7 @@ export function buildNextStepsText(items: NextStepsItem[]): string | null {
   const open = items.filter((i) => i.include && !i.done);
   if (open.length === 0) return null;
   const lines = open.map((i) => {
-    if (i.assignee) return `• <@${i.assignee.slackUserId}>: ${i.task}`; // matched (by the model or by a reviewer): a real mention
+    if (i.assignee) return `• <@${i.assignee.slackUserId}>: ${i.task}`; // a reviewer's pick or an unambiguous match (the matcher never stores an ambiguous one): a real mention
     if (!isUnassignedOwner(i.assigneeName)) return `• ${i.assigneeName}: ${i.task}`; // a name nobody matched: plain text
     return `• ${i.task} (no owner yet)`;
   });

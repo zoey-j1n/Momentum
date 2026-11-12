@@ -25,7 +25,7 @@ const TABS: { type: DraftView["type"]; label: string; hint: string; rows: number
   { type: "SUMMARY", label: "Recap", hint: "Recap of what was discussed and concluded, for the thread or an email", rows: 9 },
   { type: "MEETING", label: "Meeting", hint: "Propose a sync", rows: 4 },
   { type: "INVITE", label: "Invite", hint: "Invite text: paste into the thread, an email, or a calendar event", rows: 6 },
-  { type: "NEXT_STEPS", label: "Next steps", hint: "Built from the action items above. Momentum posts it and tags every owner shown there; change an owner before approving if it is wrong", rows: 7 },
+  { type: "NEXT_STEPS", label: "Next steps", hint: "Built from the action items above. Momentum posts it and tags every owner shown there; an owner is shown only when you picked them or exactly one person fit. Items marked 'pick one' go out without a tag until you choose", rows: 7 },
 ];
 
 export function DraftsPanel({ drafts, channel, notionEnabled }: { drafts: DraftView[]; channel: string; notionEnabled: boolean }) {

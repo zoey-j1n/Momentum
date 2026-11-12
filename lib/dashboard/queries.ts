@@ -44,7 +44,7 @@ export function matchesFilter(t: ThreadRow, f: Filter): boolean {
 }
 
 export async function listWorkspaceUsers(workspaceId: string) {
-  return prisma.slackUser.findMany({ where: { workspaceId }, select: { id: true, displayName: true }, orderBy: { displayName: "asc" } });
+  return prisma.slackUser.findMany({ where: { workspaceId }, select: { id: true, displayName: true, slackUserId: true }, orderBy: { displayName: "asc" } });
 }
 
 export async function sidebarCounts(viewer: Viewer) {

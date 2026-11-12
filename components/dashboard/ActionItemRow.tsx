@@ -16,7 +16,7 @@ export type ItemView = {
   done: boolean;
   announced: boolean; // already posted in a Next steps message
 };
-export type UserOption = { id: string; displayName: string };
+export type UserOption = { id: string; displayName: string; slackUserId?: string }; // slackUserId lets a bare-ID owner ("U0ALEX1") still show its name matches
 
 const SOURCE_LABEL: Record<ItemView["assignmentSource"], string> = {
   THREAD_ID: "from the thread",
