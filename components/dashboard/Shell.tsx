@@ -51,11 +51,6 @@ export function Shell({ active, counts, user, children }: Props) {
             })}
           </nav>
           <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)" }}>Connected</span>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}><span className="dot" style={{ width: 8, height: 8, background: "var(--accent)" }} />Slack</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-3)" }}><span className="dot" style={{ width: 8, height: 8, background: "var(--border)" }} />Notion · later</div>
-            </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 4px" }}>
               <span style={{ width: 32, height: 32, borderRadius: "50%", background: "var(--ink)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600 }}>{initials}</span>
               <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
