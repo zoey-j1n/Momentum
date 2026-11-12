@@ -12,17 +12,11 @@ import { OpenInSlack } from "@/components/dashboard/OpenInSlack";
 import { RemoveCatchUps } from "@/components/dashboard/RemoveCatchUps";
 import { notionConfigured } from "@/lib/notion";
 import { currentContext } from "@/lib/dashboard/workspace";
-import { ago, notionExportStates, listThreads, listWorkspaceUsers, matchesFilter, pickAnalysis, sidebarCounts, slackPermalink, threadTitle, type Filter } from "@/lib/dashboard/queries";
+import { ago, notionExportStates, listThreads, listWorkspaceUsers, pickAnalysis, sidebarCounts, slackPermalink, threadTitle } from "@/lib/dashboard/queries";
 
 export const dynamic = "force-dynamic";
 
-const FILTERS: { key: Filter; label: string }[] = [
-  { key: "all", label: "All" },
-  { key: "needs-response", label: "Needs response" },
-  { key: "open-questions", label: "Open questions" },
-];
-
-export default async function ThreadReviewsPage({ searchParams }: { searchParams: Promise<{ thread?: string; filter?: string }> }) {
+export default async function ThreadReviewsPage({ searchParams }: { searchParams: Promise<{ thread?: string }> }) {
   const params = await searchParams;
   // No session, or a session whose user no longer exists: the login page. Everything below is scoped to
   // the signed-in person's workspace (decision #9).
@@ -30,11 +24,9 @@ export default async function ThreadReviewsPage({ searchParams }: { searchParams
   if (!ctx) redirect("/login");
   const ws = ctx.workspace;
 
-  const filter: Filter = (FILTERS.find((f) => f.key === params.filter)?.key ?? "all");
   const viewer = { workspaceId: ctx.workspaceId, userId: ctx.user.id };
   const [threads, users, counts, notionStates] = await Promise.all([listThreads(viewer), listWorkspaceUsers(ws.id), sidebarCounts(viewer), notionExportStates()]);
-  const visible = threads.filter((t) => matchesFilter(t, filter));
-  const selected = visible.find((t) => t.id === params.thread) ?? visible[0];
+  const selected = threads.find((t) => t.id === params.thread) ?? threads[0];
   const analysis = selected ? pickAnalysis(selected) : undefined;
   const me = ctx.user.displayName;
   // Something is still moving: an analysis in progress, a draft being posted, or a Notion page being made.
@@ -48,29 +40,19 @@ export default async function ThreadReviewsPage({ searchParams }: { searchParams
           <h1 style={{ fontSize: 26, fontWeight: 600, letterSpacing: "-0.02em" }}>Thread reviews</h1>
           <p className="meta-13" style={{ fontSize: 14 }}>Every thread you ran Momentum on, with its summary, decisions and drafts.</p>
         </div>
-        <div role="group" aria-label="Filter threads" className="seg">
-          {FILTERS.map((f) => {
-            const n = threads.filter((t) => matchesFilter(t, f.key)).length;
-            return <Link key={f.key} href={`/dashboard?filter=${f.key}`} aria-current={filter === f.key}>{f.label} · {n}</Link>;
-          })}
-        </div>
       </header>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 14, alignItems: "flex-start" }}>
         <section aria-label="Thread queue" className="card" style={{ flex: "1 1 320px", minWidth: 0, padding: 8, display: "flex", flexDirection: "column", gap: 2 }}>
-          {visible.length === 0 ? (
-            threads.length === 0
-              ? <Empty title="Nothing here yet" body="You only see threads you ran “Catch up with Momentum” on. Run it on a Slack thread and come back." />
-              : <p className="meta-13" style={{ padding: 12 }}>No threads match this filter.</p>
-          ) : null}
-          {visible.map((t) => {
+          {threads.length === 0 ? <Empty title="Nothing here yet" body="You only see threads you ran “Catch up with Momentum” on. Run it on a Slack thread and come back." /> : null}
+          {threads.map((t) => {
             const a = pickAnalysis(t);
             const suggested = a?.drafts.filter((d) => d.status === "SUGGESTED").length ?? 0;
             const needs = a?.needResponse === true || suggested > 0;
             const status = a?.status === "DONE" ? (suggested > 0 ? "Needs review" : "Caught up") : a?.status === "FAILED" ? "Failed" : a ? "Analyzing" : "Queued";
             const metaText = a?.status === "DONE" ? `${suggested} draft${suggested === 1 ? "" : "s"} waiting` : a?.status === "FAILED" ? (a.error ?? "").slice(0, 60) : "";
             return (
-              <Link key={t.id} href={`/dashboard?filter=${filter}&thread=${t.id}`} className="queue-row" aria-current={selected?.id === t.id ? "page" : undefined}>
+              <Link key={t.id} href={`/dashboard?thread=${t.id}`} className="queue-row" aria-current={selected?.id === t.id ? "page" : undefined}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }} className="meta">
                   <span>{t.channelName ? `#${t.channelName}` : "Slack thread"}</span><span>{a ? ago(a.createdAt) : ago(t.createdAt)}</span>
                 </div>

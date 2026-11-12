@@ -3,8 +3,6 @@
 import { prisma } from "../db";
 import { analysisOwnedBy, threadVisibleTo, type Viewer } from "./access";
 
-export type Filter = "all" | "needs-response" | "open-questions";
-
 // Each person sees their own catch-ups of a thread (decision #19), so the analyses are filtered by requester too.
 const threadInclude = (viewer: Viewer) => ({
   analyses: {
@@ -34,13 +32,6 @@ export function pickAnalysis(t: ThreadRow): AnalysisRow | undefined {
   const newest = t.analyses[0];
   if (newest?.status === "FAILED" && newest.error?.startsWith("no new messages")) return t.analyses.find((a) => a.status === "DONE") ?? newest;
   return newest;
-}
-
-export function matchesFilter(t: ThreadRow, f: Filter): boolean {
-  const a = pickAnalysis(t);
-  if (f === "needs-response") return a?.needResponse === true;
-  if (f === "open-questions") return (a?.openQuestions.length ?? 0) > 0;
-  return true;
 }
 
 export async function listWorkspaceUsers(workspaceId: string) {
